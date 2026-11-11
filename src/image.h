@@ -70,12 +70,20 @@ inline Affine fitSimilarity(const float* src, const double* dst, int n) {
 }
 
 // FaceFusion's templates (five points: eyes, nose, mouth corners), in 0..1 of the crop
-enum Template { T_ARCFACE_112_V2, T_ARCFACE_128, T_FFHQ_512 };
+enum Template { T_ARCFACE_112_V1, T_ARCFACE_112_V2, T_ARCFACE_128, T_FFHQ_512, T_MTCNN_512 };
 inline const double* templatePoints(Template t) {
     static const double arc112v2[10] = {0.34191607, 0.46157411, 0.65653393, 0.45983393, 0.50022500, 0.64050536, 0.37097589, 0.82469196, 0.63151696, 0.82325089};
     static const double arc128[10] = {0.36167656, 0.40387734, 0.63696719, 0.40235469, 0.50019687, 0.56044219, 0.38710391, 0.72160547, 0.61507734, 0.72034453};
     static const double ffhq512[10] = {0.37691676, 0.46864664, 0.62285697, 0.46912813, 0.50123859, 0.61331904, 0.39308822, 0.72541100, 0.61150205, 0.72490465};
-    return t == T_ARCFACE_112_V2 ? arc112v2 : t == T_ARCFACE_128 ? arc128 : ffhq512;
+    static const double arc112v1[10] = {0.35473214, 0.45658929, 0.64526786, 0.45658929, 0.50000000, 0.61154464, 0.37913393, 0.77687500, 0.62086607, 0.77687500};
+    static const double mtcnn512[10] = {0.36562865, 0.46733799, 0.63305391, 0.46585885, 0.50019127, 0.61942959, 0.39032951, 0.77598822, 0.61178945, 0.77476328};
+    switch (t) {
+        case T_ARCFACE_112_V1: return arc112v1;
+        case T_ARCFACE_112_V2: return arc112v2;
+        case T_ARCFACE_128: return arc128;
+        case T_MTCNN_512: return mtcnn512;
+        default: return ffhq512;
+    }
 }
 // the matrix taking the picture onto a size x size crop of the face
 inline Affine alignFace(const float* kps5, Template t, int size) {
@@ -204,4 +212,61 @@ inline const std::vector<float>& boxMask(int w, int h, float blur, const int pad
     auto it = cache.find(key);
     if (it == cache.end()) it = cache.emplace(key, makeBoxMask(w, h, blur, padding)).first;
     return it->second;
+}
+
+// ---- drawing, for the face debugger ----
+inline void dot(Img& im, float cx, float cy, float r, const uint8_t* col) {
+    const int x0 = std::max(0, (int)(cx - r)), x1 = std::min(im.w - 1, (int)(cx + r)), y0 = std::max(0, (int)(cy - r)), y1 = std::min(im.h - 1, (int)(cy + r));
+    for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x)
+            if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r) { uint8_t* p = &im.px[((size_t)y * im.w + x) * 3]; p[0] = col[0]; p[1] = col[1]; p[2] = col[2]; }
+}
+inline void line(Img& im, float x0, float y0, float x1, float y1, float r, const uint8_t* col) {
+    const float len = std::max(std::fabs(x1 - x0), std::fabs(y1 - y0));
+    const int n = std::max(1, (int)len);
+    for (int i = 0; i <= n; ++i) dot(im, x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, r, col);
+}
+inline void rect(Img& im, const float* box, float r, const uint8_t* col) {
+    line(im, box[0], box[1], box[2], box[1], r, col); line(im, box[2], box[1], box[2], box[3], r, col);
+    line(im, box[2], box[3], box[0], box[3], r, col); line(im, box[0], box[3], box[0], box[1], r, col);
+}
+// a crop's mask edge (where it crosses 0.5), drawn back onto the picture through M (picture -> crop)
+inline void maskOutline(Img& im, const std::vector<float>& mask, int w, int h, const Affine& M, float r, const uint8_t* col) {
+    const Affine inv = M.inverse();
+    for (int y = 1; y < h - 1; ++y)
+        for (int x = 1; x < w - 1; ++x) {
+            const bool in = mask[(size_t)y * w + x] >= 0.5f;
+            if (in == (mask[(size_t)y * w + x + 1] >= 0.5f) && in == (mask[(size_t)(y + 1) * w + x] >= 0.5f)) continue;
+            double px, py; inv.apply(x + 0.5, y + 0.5, px, py);
+            dot(im, (float)px, (float)py, r, col);
+        }
+}
+// a filled convex polygon (points: x, y pairs), for the area mask
+inline void fillConvex(std::vector<float>& m, int w, int h, const std::vector<float>& pts) {
+    // the hull first (gift wrapping: few points)
+    const int n = (int)pts.size() / 2;
+    if (n < 3) return;
+    std::vector<int> hull;
+    int start = 0;
+    for (int i = 1; i < n; ++i) if (pts[i * 2] < pts[start * 2]) start = i;
+    int p = start;
+    do {
+        hull.push_back(p);
+        int q = (p + 1) % n;
+        for (int i = 0; i < n; ++i) {
+            const float cr = (pts[q * 2] - pts[p * 2]) * (pts[i * 2 + 1] - pts[p * 2 + 1]) - (pts[q * 2 + 1] - pts[p * 2 + 1]) * (pts[i * 2] - pts[p * 2]);
+            if (cr < 0) q = i;
+        }
+        p = q;
+    } while (p != start && (int)hull.size() <= n);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            bool pos = false, neg = false;   // inside: on the same side of every edge (either winding)
+            for (size_t k = 0; k < hull.size(); ++k) {
+                const int a = hull[k], b = hull[(k + 1) % hull.size()];
+                const float cr = (pts[b * 2] - pts[a * 2]) * (y + 0.5f - pts[a * 2 + 1]) - (pts[b * 2 + 1] - pts[a * 2 + 1]) * (x + 0.5f - pts[a * 2]);
+                if (cr > 0) pos = true; else if (cr < 0) neg = true;
+            }
+            if (!(pos && neg)) m[(size_t)y * w + x] = 1.0f;
+        }
 }

@@ -76,19 +76,60 @@ bool init(bool gpu, std::string& err) {
 bool usingGpu() { return gpuOn; }
 std::string device() { return gpuOn ? "GPU (DirectML)" : "CPU"; }
 
-// where FaceFusion keeps each model (https://github.com/facefusion/facefusion-assets/releases), and the F:\AIModels
-// folder and insightface name this PC may already have it under
-struct Source { const char* file; const char* release; const char* remote; const char* aiModels; const char* insight; };
+// FaceFusion's models (https://github.com/facefusion/facefusion-assets/releases/download/<release>/<file>), the
+// F:\AIModels folder this PC keeps them in, and other names this PC already has them under
+struct Source { const char* file; const char* release; const char* sub; const char* alias; };
 static const Source SOURCES[] = {
-    {"det_10g.onnx", "models-3.0.0", "retinaface_10g.onnx", "face", "det_10g.onnx"},
-    {"w600k_r50.onnx", "models-3.0.0", "arcface_w600k_r50.onnx", "face", "w600k_r50.onnx"},
-    {"inswapper_128.onnx", "models-3.0.0", "inswapper_128.onnx", "faceswap", nullptr},
-    {"hyperswap_1a_256.onnx", "models-3.3.0", "hyperswap_1a_256.onnx", "faceswap", nullptr},
-    {"gfpgan_1.4.onnx", "models-3.0.0", "gfpgan_1.4.onnx", "faceswap", nullptr},
-    {"codeformer.onnx", "models-3.0.0", "codeformer.onnx", "faceswap", nullptr},
-    {"gpen_bfr_512.onnx", "models-3.0.0", "gpen_bfr_512.onnx", "faceswap", nullptr},
-    {"xseg_1.onnx", "models-3.1.0", "xseg_1.onnx", "faceswap", nullptr},
+    // faces: detectors, landmarkers, recogniser, classifier
+    {"retinaface_10g.onnx", "models-3.0.0", "face", "det_10g.onnx"},
+    {"scrfd_2.5g.onnx", "models-3.0.0", "face", nullptr},
+    {"yoloface_8n.onnx", "models-3.0.0", "face", nullptr},
+    {"yunet_2023_mar.onnx", "models-3.4.0", "face", "face_detection_yunet_2023mar.onnx"},
+    {"2dfan4.onnx", "models-3.0.0", "face", nullptr},
+    {"peppa_wutz.onnx", "models-3.0.0", "face", nullptr},
+    {"fan_68_5.onnx", "models-3.0.0", "face", nullptr},
+    {"arcface_w600k_r50.onnx", "models-3.0.0", "face", "w600k_r50.onnx"},
+    {"fairface.onnx", "models-3.0.0", "face", nullptr},
+    // masks
+    {"xseg_1.onnx", "models-3.1.0", "faceswap", nullptr},
+    {"xseg_2.onnx", "models-3.1.0", "faceswap", nullptr},
+    {"xseg_3.onnx", "models-3.2.0", "faceswap", nullptr},
+    {"bisenet_resnet_18.onnx", "models-3.1.0", "face", nullptr},
+    {"bisenet_resnet_34.onnx", "models-3.0.0", "face", nullptr},
+    // swappers and their identity converters
+    {"inswapper_128.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"inswapper_128_fp16.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"hyperswap_1a_256.onnx", "models-3.3.0", "faceswap", nullptr},
+    {"hyperswap_1b_256.onnx", "models-3.3.0", "faceswap", nullptr},
+    {"hyperswap_1c_256.onnx", "models-3.3.0", "faceswap", nullptr},
+    {"simswap_256.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"simswap_unofficial_512.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"ghost_1_256.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"ghost_2_256.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"ghost_3_256.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"hififace_unofficial_256.onnx", "models-3.1.0", "faceswap", nullptr},
+    {"blendswap_256.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"uniface_256.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"crossface_ghost.onnx", "models-3.4.0", "faceswap", nullptr},
+    {"crossface_hififace.onnx", "models-3.4.0", "faceswap", nullptr},
+    {"crossface_simswap.onnx", "models-3.4.0", "faceswap", nullptr},
+    // restorers
+    {"gfpgan_1.2.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"gfpgan_1.3.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"gfpgan_1.4.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"codeformer.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"gpen_bfr_256.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"gpen_bfr_512.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"gpen_bfr_1024.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"gpen_bfr_2048.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"restoreformer_plus_plus.onnx", "models-3.0.0", "faceswap", nullptr},
 };
+
+static const Source* sourceOf(const std::string& file) {
+    for (const auto& s : SOURCES) if (file == s.file) return &s;
+    return nullptr;
+}
+bool known(const std::string& file) { return sourceOf(file) != nullptr; }
 
 static std::string appModels() {
 #ifdef _WIN32
@@ -100,38 +141,49 @@ static std::string appModels() {
 #endif
 }
 
-std::string findModel(const std::string& file, Say say) {
+static std::string localModel(const std::string& file) {
     std::error_code ec;
-    const Source* src = nullptr;
-    for (const auto& s : SOURCES) if (file == s.file) src = &s;
+    const Source* src = sourceOf(file);
     std::vector<std::string> spots = {exeDir() + "/models/" + file};
 #ifdef _WIN32
-    if (src && fs::exists("F:/AIModels", ec)) {
-        spots.push_back(std::string("F:/AIModels/") + src->aiModels + "/" + file);
-        spots.push_back(std::string("F:/AIModels/") + file);
-    }
     const char* home = std::getenv("USERPROFILE");
+    if (fs::exists("F:/AIModels", ec)) {
+        for (const char* sub : {src ? src->sub : "face", "face", "faceswap", ""}) {
+            const std::string d = std::string("F:/AIModels/") + sub + (*sub ? "/" : "");
+            spots.push_back(d + file);
+            if (src && src->alias) spots.push_back(d + src->alias);
+        }
+    }
 #else
     const char* home = std::getenv("HOME");
 #endif
-    if (src && src->insight && home) spots.push_back(std::string(home) + "/.insightface/models/buffalo_l/" + src->insight);
+    if (src && src->alias && home) spots.push_back(std::string(home) + "/.insightface/models/buffalo_l/" + src->alias);
     spots.push_back(appModels() + "/" + file);
-    for (const auto& p : spots) if (fs::exists(u8(p), ec) && fs::file_size(u8(p), ec) > 100000) return p;
+    for (const auto& p : spots) if (fs::exists(u8(p), ec) && fs::file_size(u8(p), ec) > 10000) return p;
+    return "";
+}
+
+bool have(const std::string& file) { return !localModel(file).empty(); }
+
+std::string findModel(const std::string& file, Say say) {
+    const std::string here = localModel(file);
+    if (!here.empty()) return here;
+    const Source* src = sourceOf(file);
     if (!src) return "";
-    // fetch it once: into F:\AIModels when this PC has it (the model store), else app data
+    std::error_code ec;
     std::string dest = appModels() + "/" + file;
 #ifdef _WIN32
-    if (fs::exists("F:/AIModels", ec)) dest = std::string("F:/AIModels/") + src->aiModels + "/" + file;
+    if (fs::exists("F:/AIModels", ec)) dest = std::string("F:/AIModels/") + src->sub + "/" + file;   // this PC's model store
 #endif
     fs::create_directories(u8(dest).parent_path(), ec);
-    const std::string url = std::string("https://github.com/facefusion/facefusion-assets/releases/download/") + src->release + "/" + src->remote;
+    const std::string url = std::string("https://github.com/facefusion/facefusion-assets/releases/download/") + src->release + "/" + file;
     if (say) say("Getting " + file + " once, from FaceFusion's model releases...");
 #ifdef _WIN32
     const bool got = URLDownloadToFileW(nullptr, fs::path(url).wstring().c_str(), u8(dest).wstring().c_str(), 0, nullptr) == S_OK;
 #else
     const bool got = std::system(("curl -sL -o '" + dest + "' '" + url + "'").c_str()) == 0;
 #endif
-    return got && fs::exists(u8(dest), ec) && fs::file_size(u8(dest), ec) > 100000 ? dest : "";
+    return got && fs::exists(u8(dest), ec) && fs::file_size(u8(dest), ec) > 10000 ? dest : "";
 }
 
 OrtSession* open(const std::string& file, std::string& err, Say say) {
@@ -150,7 +202,7 @@ OrtSession* open(const std::string& file, std::string& err, Say say) {
     bool gpu = false;
     // models DirectML gets wrong: HyperSwap comes out smeared on it (tested 2026-11-11, ONNX Runtime 1.20.1 +
     // DirectML 1.15.4, RTX 2060), right on the CPU
-    const bool cpuOnly = file == "hyperswap_1a_256.onnx";
+    const bool cpuOnly = file.rfind("hyperswap_", 0) == 0;
 #ifdef _WIN32
     if (wantGpu && !cpuOnly) {
         // DirectML wants these two; its provider is exported by the DirectML build only
@@ -243,6 +295,9 @@ bool run(OrtSession* s, std::vector<Tensor>& inputs, std::vector<Tensor>& output
         if (type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
             float* d; api->GetTensorMutableData(res[i], (void**)&d);
             outputs[i].f.assign(d, d + count);
+        } else if (type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
+            int64_t* d; api->GetTensorMutableData(res[i], (void**)&d);
+            outputs[i].i.assign(d, d + count);
         }
         api->ReleaseValue(res[i]);
     }

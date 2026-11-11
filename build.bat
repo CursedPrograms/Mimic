@@ -29,7 +29,6 @@ cmake --build build --config Release || goto :error
 if exist dist\Mimic rmdir /s /q dist\Mimic
 mkdir dist\Mimic
 for %%f in (Mimic.exe mimic-cli.exe SDL2.dll onnxruntime.dll DirectML.dll) do copy /y build\Release\%%f dist\Mimic\ >nul
-xcopy /e /i /q /y build\Release\models dist\Mimic\models >nul
 xcopy /e /i /q /y build\Release\assets dist\Mimic\assets >nul
 copy /y LICENSE dist\Mimic\ >nul
 copy /y NOTICE dist\Mimic\ >nul

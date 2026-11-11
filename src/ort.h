@@ -16,8 +16,11 @@ bool init(bool gpu, std::string& err);   // once; gpu = try DirectML first
 bool usingGpu();                          // DirectML took
 std::string device();                     // "GPU (DirectML)" or "CPU"
 
-// a model by its file name: next to Mimic (models/), F:\AIModels\<sub>\, ~/.insightface/models/buffalo_l (for the
-// insightface ones), %APPDATA%\Atelier\models; fetched once from FaceFusion's model releases when it's nowhere
+// a model by FaceFusion's file name for it: next to Mimic (models/), F:\AIModels\<sub>\ (also under this PC's own
+// names for it), ~/.insightface/models/buffalo_l, %APPDATA%\Atelier\models; fetched once from FaceFusion's model
+// releases when it's nowhere
+bool known(const std::string& file);      // in FaceFusion's model list
+bool have(const std::string& file);       // on this PC already (no download needed)
 std::string findModel(const std::string& file, Say say = nullptr);
 OrtSession* open(const std::string& file, std::string& err, Say say = nullptr);   // cached by file name
 
@@ -25,6 +28,7 @@ struct Tensor {
     std::string name;
     std::vector<int64_t> shape;
     std::vector<float> f;     // float data
+    std::vector<int64_t> i;   // int64 outputs (class ids)
     double d = 0;             // a double scalar (CodeFormer's weight), when isDouble
     bool isDouble = false;
 };

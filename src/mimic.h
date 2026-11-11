@@ -1,8 +1,6 @@
-// Mimic - the swap: one person's face onto the faces in a picture or a video frame, then the face
-// restorers. The pipeline is insightface's, as FaceFusion runs it: SCRFD finds the faces, ArcFace says who the source
-// is, inswapper (or HyperSwap) swaps on an aligned crop (pixel boost: several passes on a bigger crop), the result goes
-// back through a feathered box mask (and an occlusion mask: hands, hair and glasses in front stay), then GFPGAN,
-// CodeFormer or GPEN restore the detail.
+// Mimic - FaceFusion's face processors in C++: the face swapper (15 models), the face enhancer (9 models) and the
+// face debugger, with FaceFusion's face selector (many / one / reference; order; age, gender and race filters) and
+// face masker (box, occlusion, area and region masks).
 #pragma once
 #include "faces.h"
 #include <string>
@@ -10,46 +8,84 @@
 
 namespace Mimic {
 
-enum Swapper { SW_INSWAPPER, SW_HYPERSWAP, SW_COUNT };
-enum Enhancer { EN_NONE, EN_GFPGAN, EN_CODEFORMER, EN_GPEN, EN_COUNT };
-enum Which { W_ALL, W_LARGEST, W_LIKE_REFERENCE, W_COUNT };   // which faces in the target get swapped
+// ---- the face swapper's models ----
+enum SwapType { ST_INSWAPPER, ST_HYPERSWAP, ST_SIMSWAP, ST_GHOST, ST_HIFIFACE, ST_BLENDSWAP, ST_UNIFACE };
+struct SwapModel {
+    const char* name; const char* file; int type; Template tpl; int size;
+    float mean[3], sd[3];
+    const char* converter;   // the identity converter (Ghost, HiFiFace, SimSwap)
+    const char* about;
+};
+const std::vector<SwapModel>& swapModels();
 
-const char* swapperName(int s);
-const char* enhancerName(int e);
-const char* whichName(int w);
+// ---- the face enhancer's models ----
+struct EnhanceModel { const char* name; const char* file; Template tpl; int size; const char* about; };
+const std::vector<EnhanceModel>& enhanceModels();
+
+enum SelectorMode { SEL_MANY, SEL_ONE, SEL_REFERENCE, SEL_COUNT };
+enum Order { ORD_LEFT_RIGHT, ORD_RIGHT_LEFT, ORD_TOP_BOTTOM, ORD_BOTTOM_TOP, ORD_SMALL_LARGE, ORD_LARGE_SMALL, ORD_BEST_WORST, ORD_WORST_BEST, ORD_COUNT };
+enum Occluder { OCC_XSEG1, OCC_XSEG2, OCC_XSEG3, OCC_MANY, OCC_COUNT };
+enum Region { RG_SKIN, RG_LEFT_EYEBROW, RG_RIGHT_EYEBROW, RG_LEFT_EYE, RG_RIGHT_EYE, RG_GLASSES, RG_NOSE, RG_MOUTH, RG_UPPER_LIP, RG_LOWER_LIP, RG_COUNT };
+enum Area { AR_UPPER, AR_LOWER, AR_MOUTH, AR_COUNT };
+enum Debug { DB_BOX, DB_5, DB_5_68, DB_68, DB_68_5, DB_MASK, DB_COUNT };
+
+const char* modeName(int m);
+const char* orderName(int o);
+const char* occluderName(int o);
+const char* regionName(int r);
+const char* areaName(int a);
+const char* debugName(int d);
 
 struct Settings {
-    int swapper = SW_INSWAPPER;
-    int boost = 1;                 // pixel boost: the crop is boost x the model's size, run in boost x boost passes
-    float weight = 0.5f;           // 0 more of the source, 1 more of the target's own identity (0.5 = neither)
-    int enhancer = EN_GFPGAN;
-    float enhanceBlend = 0.8f;     // how much of the restored face (FaceFusion: 80%)
-    float codeformerFidelity = 0.5f;
-    float maskBlur = 0.3f;         // the box mask's feathering
-    int padding[4] = {0, 0, 0, 0}; // top, right, bottom, left, in % of the crop
-    bool occlusion = false;        // XSeg: hands, hair, glasses in front of the face stay
-    int which = W_ALL;
-    float referenceDistance = 0.6f;   // W_LIKE_REFERENCE: faces this close to the reference face
-    float minScore = 0.5f;         // the detector's confidence
+    DetectSettings detect;
+    // the face selector
+    int mode = SEL_MANY;
+    int order = ORD_LARGE_SMALL;
+    int gender = -2;               // -2 any, -1 like the source's, else G_MALE / G_FEMALE
+    int race = -2;                 // -2 any, -1 like the source's, else a Race
+    int ageStart = 0, ageEnd = 100;
+    float referenceDistance = 0.3f;
+    // the face masker
+    bool maskBox = true, maskOcclusion = false, maskArea = false, maskRegion = false;
+    int occluder = OCC_XSEG1;
+    int parser = 1;                // 0 bisenet_resnet_18, 1 bisenet_resnet_34
+    bool areas[AR_COUNT] = {true, true, true};
+    bool regions[RG_COUNT] = {true, true, true, true, true, true, true, true, true, true};
+    float maskBlur = 0.3f;
+    int padding[4] = {0, 0, 0, 0};
+    // the processors, in FaceFusion's order
+    bool swap = true;
+    int swapModel = 0;             // index into swapModels()
+    int boost = 1;                 // pixel boost: the crop is boost x the model's size
+    float weight = 0.5f;           // 0 more of the source, 1 more of the target's own identity
+    bool enhance = true;
+    int enhanceModel = 2;          // index into enhanceModels() (GFPGAN 1.4)
+    float enhanceBlend = 0.8f;
+    float enhanceWeight = 0.5f;    // CodeFormer's fidelity
+    bool debug = false;
+    bool debugItems[DB_COUNT] = {false, false, true, false, false, true};
 };
 
 // the person to become: their identity, averaged over every source picture (the biggest face in each)
 struct Source {
     std::vector<Face> faces;
-    std::vector<float> emb;        // averaged raw identity
-    std::vector<float> embNorm;
+    std::vector<Img> pictures;     // kept for BlendSwap and UniFace (they take the source's picture)
+    std::vector<float> emb, embNorm;
     bool ready() const { return emb.size() == 512; }
 };
 bool addSource(Source& src, const Img& picture, std::string& err, Ort::Say say = nullptr);
-void finishSource(Source& src);   // the average, after adding
+void finishSource(Source& src);
 
-// a face in the target to look for (W_LIKE_REFERENCE)
 struct Reference { Face face; bool set = false; };
 
-// swap the faces in a picture or frame, in place; returns how many were swapped (-1 on error)
-int swapFrame(Img& frame, const Source& src, const Settings& st, const Reference& ref, std::string& err, Ort::Say say = nullptr);
-
-// load what these settings need now (so the first frame isn't slow, and missing models are fetched up front)
+// every face the settings pick in this frame (analysed: points, identity, age/gender/race when the filters need it)
+bool pickFaces(const Img& frame, const Source& src, const Settings& st, const Reference& ref, std::vector<Face>& picked, std::vector<Face>* all, std::string& err);
+// the processors on a picture or frame, in place; returns how many faces were done (-1 on error)
+int processFrame(Img& frame, const Source& src, const Settings& st, const Reference& ref, std::string& err, Ort::Say say = nullptr);
+inline int swapFrame(Img& frame, const Source& src, const Settings& st, const Reference& ref, std::string& err, Ort::Say say = nullptr) { return processFrame(frame, src, st, ref, err, say); }
+// load (and fetch, once) what these settings need
 bool prepare(const Settings& st, std::string& err, Ort::Say say = nullptr);
+// the models these settings need that aren't on this PC yet
+std::vector<std::string> missingModels(const Settings& st);
 
 }  // namespace Mimic

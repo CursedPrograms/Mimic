@@ -169,7 +169,8 @@ static GLuint originalTex = 0, resultTex = 0;
 static bool originalStale = false, resultStale = false, haveResult = false;
 static float wipe = 0.5f;
 static int view = 0;                   // 0 wipe, 1 result, 2 original
-static int jpegQuality = 95, crf = 18;
+static int jpegQuality = 95;
+static Video::Output output;          // FaceFusion's output settings
 static bool showAbout = false;
 
 // the worker: model work, one job at a time
@@ -238,7 +239,7 @@ static void loadTarget(const std::string& path) {
             if (!Video::probe(path, info, err) || !Video::frameAt(path, 0, im, err)) { say(err); return; }
         } else if (!loadPicture(path, im, err)) { say(err); return; }
         std::vector<Face> faces;
-        Faces::detect(im, faces, err, settings.minScore, say);
+        Faces::analyse(im, settings.detect, faces, err, false, say);
         post([im, info, faces] { original = im; targetInfo = info; previewFaces = faces; originalStale = true; previewWanted = true; });
         say(base(path) + (Video::isVideo(path) ? " (" + std::to_string(info.w) + " x " + std::to_string(info.h) + ", " + std::to_string(info.frames) + " frames)" : " (" + std::to_string(im.w) + " x " + std::to_string(im.h) + ")") + ", " + std::to_string(faces.size()) + " face(s)");
     });
@@ -250,7 +251,7 @@ static void seekFrame(float t) {
         Img im; std::string err;
         if (!Video::frameAt(path, t, im, err)) { say(err); return; }
         std::vector<Face> faces;
-        Faces::detect(im, faces, err, settings.minScore);
+        Faces::analyse(im, settings.detect, faces, err, false);
         post([im, faces] { original = im; previewFaces = faces; originalStale = true; previewWanted = true; });
     });
 }
@@ -288,18 +289,21 @@ static void renderVideo() {
     if (!targetIsVideo || !source.ready()) return;
     const std::string out = fileDialog(true, "MP4 video|*.mp4|", "mp4", defaultOut());
     if (out.empty()) return;
-    const std::string in = targetPath; const auto src = source; const auto st = settings; const auto ref = reference; const int q = crf;
+    const std::string in = targetPath; const auto src = source; const auto st = settings; const auto ref = reference; const auto vo = output;
     stopRender = false; progress = 0.0f;
-    queue([in, out, src, st, ref, q] {
+    queue([in, out, src, st, ref, vo] {
         std::string err;
         Video::Reader rd;
         if (!rd.open(in, err)) { say(err); progress = -1; return; }
+        if (vo.trimStart > 0) { rd.close(); if (!rd.open(in, err, vo.trimStart / rd.info.fps)) { say(err); progress = -1; return; } }
+        const long total = vo.trimEnd > vo.trimStart ? vo.trimEnd - vo.trimStart : rd.info.frames - vo.trimStart;
+        rd.info.frames = total;
         Video::Writer wr;
-        if (!wr.open(out, rd.info.w, rd.info.h, rd.info.fps, in, q, err)) { say(err); progress = -1; return; }
+        if (!wr.open(out, rd.info.w, rd.info.h, rd.info.fps, in, vo, err)) { say(err); progress = -1; return; }
         Img frame;
         long done = 0;
         const auto t0 = std::chrono::steady_clock::now();
-        while (!stopRender && rd.next(frame)) {
+        while (!stopRender && done < total && rd.next(frame)) {
             if (Mimic::swapFrame(frame, src, st, ref, err) < 0) { say(err); break; }
             if (!wr.write(frame)) { say("ffmpeg stopped taking frames"); break; }
             ++done;
@@ -365,6 +369,15 @@ static void keys() {
     if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_3)) view = 2;
 }
 
+static bool combo(const char* id, int& v, int n, const char* (*name)(int)) {
+    bool changed = false;
+    if (ImGui::BeginCombo(id, name(v))) {
+        for (int i = 0; i < n; ++i) if (ImGui::Selectable(name(i), v == i)) { v = i; changed = true; }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
 static void heading(const char* t) { ImGui::PushStyleColor(ImGuiCol_Text, col4(C_PINK)); ImGui::TextUnformatted(t); ImGui::PopStyleColor(); }
 
 static ImVec2 sourcePanelMin, sourcePanelMax;
@@ -420,23 +433,34 @@ static void leftPanel(ImVec2 pos, ImVec2 size) {
     }
 
     ImGui::Spacing();
-    heading("WHICH FACES");
+    heading("FACE SELECTOR");
     ImGui::PushItemWidth(w);
-    if (ImGui::BeginCombo("##which", Mimic::whichName(settings.which))) {
-        for (int i = 0; i < Mimic::W_COUNT; ++i) if (ImGui::Selectable(Mimic::whichName(i), settings.which == i)) { settings.which = i; previewWanted = true; }
-        ImGui::EndCombo();
-    }
-    ImGui::PopItemWidth();
-    if (settings.which == Mimic::W_LIKE_REFERENCE) {
+    if (combo("##mode", settings.mode, Mimic::SEL_COUNT, Mimic::modeName)) previewWanted = true;
+    if (settings.mode == Mimic::SEL_REFERENCE) {
         if (reference.set && referenceTex) {
             ImGui::Image((ImTextureID)(intptr_t)referenceTex, ImVec2(64, 64));
             ImGui::SameLine(); ImGui::TextWrapped("Only faces like this one. Click another face in the preview to change it.");
-            ImGui::PushItemWidth(w);
-            ImGui::SliderFloat("##dist", &settings.referenceDistance, 0.2f, 1.2f, "how alike: %.2f");
+            ImGui::SliderFloat("##dist", &settings.referenceDistance, 0.0f, 1.0f, "face distance: %.2f");
             if (ImGui::IsItemDeactivatedAfterEdit()) previewWanted = true;
-            ImGui::PopItemWidth();
         } else ImGui::TextWrapped("Click a face in the preview: only faces like it get swapped.");
+    } else {
+        ImGui::TextDisabled("Order");
+        if (combo("##order", settings.order, Mimic::ORD_COUNT, Mimic::orderName)) previewWanted = true;
+        static const char* genders[] = {"Any gender", "Like the source", "Male", "Female"};
+        int g = settings.gender + 2;
+        if (ImGui::Combo("##gender", &g, genders, 4)) { settings.gender = g - 2; previewWanted = true; }
+        static std::vector<std::string> races = {"Any race", "Like the source", "White", "Black", "Latino", "Asian", "Indian", "Arabic"};
+        int r = settings.race + 2;
+        if (ImGui::BeginCombo("##race", races[r].c_str())) {
+            for (int i = 0; i < (int)races.size(); ++i) if (ImGui::Selectable(races[i].c_str(), r == i)) { settings.race = i - 2; previewWanted = true; }
+            ImGui::EndCombo();
+        }
+        int age[2] = {settings.ageStart, settings.ageEnd};
+        if (ImGui::SliderInt2("##age", age, 0, 100, "age %d")) { settings.ageStart = std::min(age[0], age[1]); settings.ageEnd = std::max(age[0], age[1]); }
+        if (ImGui::IsItemDeactivatedAfterEdit()) previewWanted = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only faces in this age span (FairFace guesses each face's age, gender and race).");
     }
+    ImGui::PopItemWidth();
     ImGui::End();
 }
 
@@ -487,7 +511,7 @@ static void canvas(ImVec2 pos, ImVec2 size) {
     for (size_t i = 0; i < previewFaces.size(); ++i) {
         const Face& f = previewFaces[i];
         const ImVec2 fa(a.x + f.box[0] * s, a.y + f.box[1] * s), fb(a.x + f.box[2] * s, a.y + f.box[3] * s);
-        const bool isRef = reference.set && settings.which == Mimic::W_LIKE_REFERENCE && Faces::distance(f, reference.face) < 0.05f;
+        const bool isRef = reference.set && settings.mode == Mimic::SEL_REFERENCE && Faces::distance(f, reference.face) < 0.03f;
         if (ImGui::IsItemHovered() && m.x >= fa.x && m.x <= fb.x && m.y >= fa.y && m.y <= fb.y) hovered = (int)i;
         if (hovered == (int)i || isRef) dl->AddRect(fa, fb, isRef ? C_PINK : C_TEXT, 2, 0, 1.5f);
     }
@@ -499,7 +523,7 @@ static void canvas(ImVec2 pos, ImVec2 size) {
                 Face face = f; std::string err;
                 if (!Faces::embed(im, face, err)) { say(err); return; }
                 Img thumb = faceThumb(im, face, 96);
-                post([face, thumb] { reference.face = face; reference.set = true; referenceThumb = thumb; referenceTexStale = true; settings.which = Mimic::W_LIKE_REFERENCE; previewWanted = true; });
+                post([face, thumb] { reference.face = face; reference.set = true; referenceThumb = thumb; referenceTexStale = true; settings.mode = Mimic::SEL_REFERENCE; previewWanted = true; });
             });
         }
     } else if (ImGui::IsItemActive() && view == 0) wipe = std::clamp((m.x - a.x) / dw, 0.0f, 1.0f);
@@ -519,46 +543,120 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
     const float w = ImGui::GetContentRegionAvail().x;
     bool again = false;   // re-run the preview
     auto after = [&] { if (ImGui::IsItemDeactivatedAfterEdit()) again = true; };
-    ImGui::PushItemWidth(w);
-    heading("SWAP");
-    if (ImGui::BeginCombo("##swapper", Mimic::swapperName(settings.swapper))) {
-        for (int i = 0; i < Mimic::SW_COUNT; ++i) if (ImGui::Selectable(Mimic::swapperName(i), settings.swapper == i)) { settings.swapper = i; again = true; }
-        ImGui::EndCombo();
+    const float footH = 150;
+    ImGui::BeginChild("##settings", ImVec2(w, size.y - footH - 20), false);
+    const float cw = ImGui::GetContentRegionAvail().x;
+    ImGui::PushItemWidth(cw);
+    // a model choice: models not on this PC yet say so (they're fetched once when used)
+    auto modelCombo = [&](const char* id, int& v, int n, std::function<const char*(int)> name, std::function<const char*(int)> file, std::function<const char*(int)> about) {
+        bool changed = false;
+        auto label = [&](int i) { std::string l = name(i); if (!Ort::have(file(i))) l += "  (download)"; return l; };
+        if (ImGui::BeginCombo(id, label(v).c_str())) {
+            for (int i = 0; i < n; ++i) {
+                if (ImGui::Selectable(label(i).c_str(), v == i)) { v = i; changed = true; }
+                if (ImGui::IsItemHovered() && about) ImGui::SetTooltip("%s", about(i));
+            }
+            ImGui::EndCombo();
+        }
+        return changed;
+    };
+    const auto& sms = Mimic::swapModels();
+    const auto& ems = Mimic::enhanceModels();
+
+    heading("PROCESSORS");
+    if (ImGui::Checkbox("Face swapper", &settings.swap)) again = true;
+    if (ImGui::Checkbox("Face enhancer", &settings.enhance)) again = true;
+    if (ImGui::Checkbox("Face debugger", &settings.debug)) again = true;
+
+    if (settings.swap && ImGui::CollapsingHeader("FACE SWAPPER", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (modelCombo("##swapper", settings.swapModel, (int)sms.size(), [&](int i) { return sms[i].name; }, [&](int i) { return sms[i].file; }, [&](int i) { return sms[i].about; })) again = true;
+        const int base = sms[settings.swapModel].size;
+        char fmt[64]; snprintf(fmt, sizeof fmt, "pixel boost: %d px", base * settings.boost);
+        ImGui::SliderInt("##boost", &settings.boost, 1, 4, fmt); after();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A bigger crop, swapped in several passes: sharper on big faces, slower.");
+        ImGui::SliderFloat("##weight", &settings.weight, 0.0f, 1.0f, "weight: %.2f"); after();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0: more of the face to become. 1: more of the target's own look. 0.5: neither.");
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("inswapper: fast, the classic. HyperSwap: sharper (256 px), runs on the CPU.");
-    ImGui::SliderInt("##boost", &settings.boost, 1, 4, settings.boost == 1 ? "pixel boost: off" : "pixel boost: %dx"); after();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A bigger crop, swapped in several passes: sharper on big faces, slower.");
-    ImGui::SliderFloat("##weight", &settings.weight, 0.0f, 1.0f, "likeness: %.2f"); after();
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0: more of the face to become. 1: more of the target's own look. 0.5: neither.");
-    ImGui::Spacing();
-    heading("RESTORE");
-    if (ImGui::BeginCombo("##enh", Mimic::enhancerName(settings.enhancer))) {
-        for (int i = 0; i < Mimic::EN_COUNT; ++i) if (ImGui::Selectable(Mimic::enhancerName(i), settings.enhancer == i)) { settings.enhancer = i; again = true; }
-        ImGui::EndCombo();
+    if (settings.enhance && ImGui::CollapsingHeader("FACE ENHANCER", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (modelCombo("##enh", settings.enhanceModel, (int)ems.size(), [&](int i) { return ems[i].name; }, [&](int i) { return ems[i].file; }, [&](int i) { return ems[i].about; })) again = true;
+        ImGui::SliderFloat("##blend", &settings.enhanceBlend, 0.0f, 1.0f, "blend: %.2f"); after();
+        if (std::string(ems[settings.enhanceModel].file) == "codeformer.onnx") { ImGui::SliderFloat("##fid", &settings.enhanceWeight, 0.0f, 1.0f, "weight: %.2f"); after(); }
     }
-    ImGui::BeginDisabled(settings.enhancer == Mimic::EN_NONE);
-    ImGui::SliderFloat("##blend", &settings.enhanceBlend, 0.0f, 1.0f, "blend: %.2f"); after();
-    if (settings.enhancer == Mimic::EN_CODEFORMER) { ImGui::SliderFloat("##fid", &settings.codeformerFidelity, 0.0f, 1.0f, "fidelity: %.2f"); after(); }
-    ImGui::EndDisabled();
-    ImGui::Spacing();
-    heading("MASK");
-    ImGui::SliderFloat("##blur", &settings.maskBlur, 0.0f, 1.0f, "feather: %.2f"); after();
-    if (ImGui::Checkbox("Keep what's in front", &settings.occlusion)) again = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hands, hair and glasses in front of the face stay in front (XSeg).");
-    if (ImGui::TreeNode("Padding")) {
-        const char* names[4] = {"top: %d%%", "right: %d%%", "bottom: %d%%", "left: %d%%"};
-        for (int i = 0; i < 4; ++i) { ImGui::PushID(i); ImGui::SliderInt("##p", &settings.padding[i], 0, 50, names[i]); after(); ImGui::PopID(); }
-        ImGui::TreePop();
+    if (settings.debug && ImGui::CollapsingHeader("FACE DEBUGGER", ImGuiTreeNodeFlags_DefaultOpen))
+        for (int i = 0; i < Mimic::DB_COUNT; ++i) if (ImGui::Checkbox(Mimic::debugName(i), &settings.debugItems[i])) again = true;
+
+    if (ImGui::CollapsingHeader("FACE DETECTOR")) {
+        if (combo("##det", settings.detect.model, DET_COUNT, detectorName)) again = true;
+        static const int sizes[] = {160, 320, 480, 512, 640};
+        const bool fixed = settings.detect.model == DET_YOLOFACE || settings.detect.model == DET_YUNET;
+        ImGui::BeginDisabled(fixed);
+        char cur[32]; snprintf(cur, sizeof cur, "%d x %d", fixed ? 640 : settings.detect.size, fixed ? 640 : settings.detect.size);
+        if (ImGui::BeginCombo("##dsize", cur)) {
+            for (int sz : sizes) { char l[32]; snprintf(l, sizeof l, "%d x %d", sz, sz); if (ImGui::Selectable(l, settings.detect.size == sz)) { settings.detect.size = sz; again = true; } }
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("Angles");
+        const char* ang[4] = {"0", "90", "180", "270"};
+        for (int i = 0; i < 4; ++i) { if (i) ImGui::SameLine(); if (ImGui::Checkbox(ang[i], &settings.detect.angles[i])) again = true; }
+        ImGui::SliderFloat("##dscore", &settings.detect.score, 0.05f, 1.0f, "score: %.2f"); after();
+        int mg = settings.detect.margin[0];
+        if (ImGui::SliderInt("##margin", &mg, 0, 100, "margin: %d")) for (auto& m : settings.detect.margin) m = mg;
+        after();
     }
+    if (ImGui::CollapsingHeader("FACE LANDMARKER")) {
+        if (combo("##lm", settings.detect.landmarker, LM_COUNT, landmarkerName)) again = true;
+        ImGui::SliderFloat("##lscore", &settings.detect.landmarkerScore, 0.0f, 1.0f, "score: %.2f"); after();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Its 68 points are used when it's at least this sure. 0: never (the detector's five only).");
+    }
+    if (ImGui::CollapsingHeader("FACE MASKER", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextDisabled("Types");
+        if (ImGui::Checkbox("Box", &settings.maskBox)) again = true;
+        ImGui::SameLine(); if (ImGui::Checkbox("Occlusion", &settings.maskOcclusion)) again = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hands, hair and glasses in front of the face stay in front (XSeg).");
+        if (ImGui::Checkbox("Area", &settings.maskArea)) again = true;
+        ImGui::SameLine(); if (ImGui::Checkbox("Region", &settings.maskRegion)) again = true;
+        if (settings.maskOcclusion && combo("##occ", settings.occluder, Mimic::OCC_COUNT, Mimic::occluderName)) again = true;
+        if (settings.maskArea) for (int i = 0; i < Mimic::AR_COUNT; ++i) { if (i) ImGui::SameLine(); if (ImGui::Checkbox(Mimic::areaName(i), &settings.areas[i])) again = true; }
+        if (settings.maskRegion) {
+            static const char* parsers[] = {"BiSeNet ResNet-18", "BiSeNet ResNet-34"};
+            if (ImGui::Combo("##parser", &settings.parser, parsers, 2)) again = true;
+            for (int i = 0; i < Mimic::RG_COUNT; ++i) { if (i % 2) ImGui::SameLine(cw / 2); if (ImGui::Checkbox(Mimic::regionName(i), &settings.regions[i])) again = true; }
+        }
+        ImGui::SliderFloat("##blur", &settings.maskBlur, 0.0f, 1.0f, "blur: %.2f"); after();
+        const char* names[4] = {"padding top: %d%%", "padding right: %d%%", "padding bottom: %d%%", "padding left: %d%%"};
+        for (int i = 0; i < 4; ++i) { ImGui::PushID(i); ImGui::SliderInt("##p", &settings.padding[i], 0, 100, names[i]); after(); ImGui::PopID(); }
+    }
+    if (ImGui::CollapsingHeader("OUTPUT")) {
+        ImGui::SliderInt("##q", &jpegQuality, 1, 100, "image quality: %d");
+        auto strCombo = [&](const char* id, std::string& v, const std::vector<std::string>& opts) {
+            if (ImGui::BeginCombo(id, v.c_str())) { for (const auto& o : opts) if (ImGui::Selectable(o.c_str(), v == o)) v = o; ImGui::EndCombo(); }
+        };
+        ImGui::TextDisabled("Video");
+        strCombo("##venc", output.videoEncoder, Video::videoEncoders());
+        strCombo("##preset", output.preset, Video::presets());
+        ImGui::SliderInt("##vq", &output.videoQuality, 0, 100, "video quality: %d");
+        float fps = (float)output.fps;
+        if (ImGui::SliderFloat("##fps", &fps, 0.0f, 60.0f, fps <= 0 ? "fps: as the target" : "fps: %.2f")) output.fps = fps;
+        int trim[2] = {(int)output.trimStart, (int)(output.trimEnd > 0 ? output.trimEnd : std::max<long>(1, targetInfo.frames))};
+        if (targetIsVideo && targetInfo.frames > 0 && ImGui::SliderInt2("##trim", trim, 0, (int)targetInfo.frames, "frame %d")) {
+            output.trimStart = std::min(trim[0], trim[1]); output.trimEnd = std::max(trim[0], trim[1]);
+            if (output.trimEnd >= targetInfo.frames) output.trimEnd = 0;
+        }
+        ImGui::TextDisabled("Audio");
+        strCombo("##aenc", output.audioEncoder, Video::audioEncoders());
+        ImGui::SliderInt("##aq", &output.audioQuality, 0, 100, "audio quality: %d");
+        ImGui::SliderInt("##av", &output.audioVolume, 0, 100, "volume: %d%%");
+    }
+    if (ImGui::CollapsingHeader("EXECUTION")) ImGui::TextWrapped("Running on the %s. (mimic-cli --execution-providers cpu runs on the CPU.)", Ort::device().c_str());
     ImGui::PopItemWidth();
+    ImGui::EndChild();
     if (again) previewWanted = true;
 
     // the foot: save / render, progress, status, credit
-    const float footH = 190;
     ImGui::SetCursorPosY(size.y - footH);
     ImGui::Separator();
     if (targetIsVideo) {
-        ImGui::PushItemWidth(w); ImGui::SliderInt("##crf", &crf, 10, 30, "video quality (CRF): %d"); ImGui::PopItemWidth();
         if (progress >= 0) {
             ImGui::ProgressBar(progress, ImVec2(w, 8), "");
             if (ImGui::Button("Stop", ImVec2(w, 0))) stopRender = true;
@@ -568,7 +666,6 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
             ImGui::EndDisabled();
         }
     } else {
-        ImGui::PushItemWidth(w); ImGui::SliderInt("##q", &jpegQuality, 60, 100, "JPEG quality: %d"); ImGui::PopItemWidth();
         ImGui::BeginDisabled(!haveResult);
         if (ImGui::Button("Save picture...", ImVec2(w, 0))) savePictureAs();
         ImGui::EndDisabled();

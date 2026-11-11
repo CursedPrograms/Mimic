@@ -118,17 +118,80 @@ bool Reader::next(Img& frame) {
 
 void Reader::close() { if (pipe) { pcloseW(pipe); pipe = nullptr; } }
 
-bool Writer::open(const std::string& out, int w_, int h_, double fps, const std::string& audioFrom, int crf, std::string& err) {
+const std::vector<std::string>& videoEncoders() {
+    static const std::vector<std::string> v = {"libx264", "libx265", "libvpx-vp9", "h264_nvenc", "hevc_nvenc", "h264_amf", "hevc_amf", "h264_qsv", "hevc_qsv"};
+    return v;
+}
+const std::vector<std::string>& presets() {
+    static const std::vector<std::string> v = {"ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"};
+    return v;
+}
+const std::vector<std::string>& audioEncoders() {
+    static const std::vector<std::string> v = {"aac", "libmp3lame", "libopus", "libvorbis", "flac", "copy"};
+    return v;
+}
+
+
+// FaceFusion's quality (0..100) to each encoder's own scale, and its preset names to NVENC/AMF/QSV ones
+static std::wstring videoArgs(const Output& o) {
+    const std::string& e = o.videoEncoder;
+    const int q = std::clamp(o.videoQuality, 0, 100);
+    wchar_t b[256];
+    auto pick = [&](const char* a, const char* m, const char* z) {   // fast / medium / slow buckets
+        const auto& p = presets();
+        const int i = (int)(std::find(p.begin(), p.end(), o.preset) - p.begin());
+        return i <= 2 ? a : i <= 5 ? m : z;
+    };
+    if (e == "libx264" || e == "libx265") swprintf(b, 256, L" -c:v %hs -crf %d -preset %hs", e.c_str(), (int)std::lround(51 - q * 0.51), o.preset.c_str());
+    else if (e == "libvpx-vp9") swprintf(b, 256, L" -c:v libvpx-vp9 -crf %d -b:v 0", (int)std::lround(63 - q * 0.63));
+    else if (e == "h264_nvenc" || e == "hevc_nvenc") swprintf(b, 256, L" -c:v %hs -cq %d -preset %hs", e.c_str(), (int)std::lround(51 - q * 0.51), pick("p1", "p4", "p7"));
+    else if (e == "h264_amf" || e == "hevc_amf") swprintf(b, 256, L" -c:v %hs -qp_i %d -qp_p %d -quality %hs", e.c_str(), (int)std::lround(51 - q * 0.51), (int)std::lround(51 - q * 0.51), pick("speed", "balanced", "quality"));
+    else swprintf(b, 256, L" -c:v %hs -global_quality %d -preset %hs", e.c_str(), (int)std::lround(51 - q * 0.51), pick("veryfast", "medium", "veryslow"));
+    return b;
+}
+static std::wstring audioArgs(const Output& o) {
+    if (o.audioEncoder == "copy" && o.audioVolume == 100) return L" -c:a copy";
+    const int q = std::clamp(o.audioQuality, 0, 100);
+    wchar_t b[200];
+    const std::string e = o.audioEncoder == "copy" ? "aac" : o.audioEncoder;
+    if (e == "flac") swprintf(b, 200, L" -c:a flac");
+    else if (e == "libvorbis") swprintf(b, 200, L" -c:a libvorbis -q:a %.1f", q / 10.0);
+    else swprintf(b, 200, L" -c:a %hs -b:a %dk", e.c_str(), 32 + q * 288 / 100);
+    std::wstring r = b;
+    if (o.audioVolume != 100) { swprintf(b, 200, L" -af volume=%.2f", o.audioVolume / 100.0); r += b; }
+    return r;
+}
+
+bool Writer::open(const std::string& out, int w_, int h_, double fps, const std::string& audioFrom, const Output& o, std::string& err) {
     close();
     w = w_; h = h_;
     wchar_t head[256];
     swprintf(head, 256, L" -v error -y -f rawvideo -pix_fmt rgb24 -s %dx%d -r %.6f -i -", w, h, fps);
-    wchar_t enc[160];
-    // H.264 needs even sizes: the odd pixel is cropped off
-    swprintf(enc, 160, L" -map 0:v:0 -map 1:a? -vf crop=trunc(iw/2)*2:trunc(ih/2)*2 -c:v libx264 -preset medium -crf %d -pix_fmt yuv420p -c:a copy -shortest ", crf);
-    pipe = run(q(ffmpeg()) + head + L" -i " + q(audioFrom) + enc + q(out), L"wb");
+    // the sound, cut to the same frames
+    std::wstring audioIn = L" -i " + q(audioFrom);
+    if (o.trimStart > 0 || o.trimEnd > 0) {
+        wchar_t t[128];
+        const double srcFps = fps > 0 ? fps : 25;
+        swprintf(t, 128, L" -ss %.4f", o.trimStart / srcFps);
+        std::wstring tt = t;
+        if (o.trimEnd > o.trimStart) { swprintf(t, 128, L" -to %.4f", o.trimEnd / srcFps); tt += t; }
+        audioIn = tt + audioIn;
+    }
+    std::wstring rate;
+    if (o.fps > 0) { wchar_t r[48]; swprintf(r, 48, L" -r %.4f", o.fps); rate = r; }
+    // H.264/H.265 need even sizes: the odd pixel is cropped off
+    const std::wstring body = L" -map 0:v:0 -map 1:a? -vf crop=trunc(iw/2)*2:trunc(ih/2)*2" + videoArgs(o) + L" -pix_fmt yuv420p" + rate + audioArgs(o) + L" -shortest ";
+    pipe = run(q(ffmpeg()) + head + audioIn + body + q(out), L"wb");
     if (!pipe) { err = "Can't run ffmpeg to write " + out; return false; }
     return true;
+}
+
+bool Writer::open(const std::string& out, int w_, int h_, double fps, const std::string& audioFrom, int crf, std::string& err) {
+    Output o;
+    o.videoQuality = std::clamp((int)std::lround((51 - crf) / 0.51), 0, 100);
+    o.preset = "medium";
+    o.audioEncoder = "copy";
+    return open(out, w_, h_, fps, audioFrom, o, err);
 }
 
 bool Writer::write(const Img& frame) { return pipe && fwrite(frame.px.data(), 1, frame.px.size(), pipe) == frame.px.size(); }
