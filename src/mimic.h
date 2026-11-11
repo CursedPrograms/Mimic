@@ -85,6 +85,8 @@ int processFrame(Img& frame, const Source& src, const Settings& st, const Refere
 inline int swapFrame(Img& frame, const Source& src, const Settings& st, const Reference& ref, std::string& err, Ort::Say say = nullptr) { return processFrame(frame, src, st, ref, err, say); }
 // load (and fetch, once) what these settings need
 bool prepare(const Settings& st, std::string& err, Ort::Say say = nullptr);
+// the models these settings use (the splash counts them as they load)
+std::vector<std::string> modelsFor(const Settings& st);
 // the models these settings need that aren't on this PC yet
 std::vector<std::string> missingModels(const Settings& st);
 

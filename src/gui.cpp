@@ -6,6 +6,7 @@
 //   Mimic --capture out.bmp [--source face.jpg] [target]     a screenshot from a hidden window, then quit
 #include "mimic.h"
 #include "picture.h"
+#include "splash.h"
 #include "video.h"
 
 #include <SDL.h>
@@ -77,12 +78,22 @@ static void loadFont() {
     for (const char* f : fonts)
         if (fileExists(f)) {
             static const ImWchar ranges[] = {0x0020, 0x00FF, 0x2190, 0x21FF, 0x2600, 0x26FF, 0};
-            io.Fonts->AddFontFromFileTTF(f, 16.0f, nullptr, ranges);
-            if (fileExists("C:/Windows/Fonts/seguisym.ttf")) {
-                ImFontConfig merge; merge.MergeMode = true;
-                static const ImWchar sym[] = {0x2190, 0x21FF, 0x2600, 0x26FF, 0};
-                io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/seguisym.ttf", 16.0f, &merge, sym);
-            }
+            // the interface font, then the splash's: a light one for the name, a small one for the credits; Segoe UI has
+            // no stars (the credit's), so Windows' symbol font fills them in
+            auto add = [&](const char* file, float size) {
+                ImFont* font = io.Fonts->AddFontFromFileTTF(file, size, nullptr, ranges);
+                if (fileExists("C:/Windows/Fonts/seguisym.ttf")) {
+                    ImFontConfig merge; merge.MergeMode = true;
+                    static const ImWchar sym[] = {0x2190, 0x21FF, 0x2600, 0x26FF, 0};
+                    io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/seguisym.ttf", size, &merge, sym);
+                }
+                return font;
+            };
+            add(f, 16.0f);
+            const char* light = fileExists("C:/Windows/Fonts/segoeuil.ttf") ? "C:/Windows/Fonts/segoeuil.ttf" : f;
+            ImFont* title = add(light, 50.0f);
+            ImFont* small = add(f, 13.0f);
+            Splash::setFonts(title, small);
             return;
         }
     io.Fonts->AddFontDefault();
@@ -678,11 +689,14 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
 
 static void about() {
     if (showAbout) { ImGui::OpenPopup("About Mimic"); showAbout = false; }
-    ImGui::SetNextWindowSize(ImVec2(500, 0));
-    if (ImGui::BeginPopupModal("About Mimic", nullptr, ImGuiWindowFlags_NoResize)) {
-        heading("Mimic " MIMIC_VERSION);
-        ImGui::TextWrapped("One person's face onto a picture or a video, in C++. Part of Atelier, "
-                           "Cursed Entertainment's creative suite. Its pipeline follows FaceFusion's.");
+    ImGui::SetNextWindowSize(ImVec2(Splash::W + 16, 0));
+    if (ImGui::BeginPopupModal("About Mimic", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar)) {
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        Splash::draw(ImGui::GetWindowDrawList(), at.x, at.y, nullptr, -1);
+        ImGui::Dummy(ImVec2(Splash::W, Splash::H));
+        ImGui::Spacing();
+        ImGui::TextWrapped("FaceFusion's face processors in C++: swap, enhance, debug, on pictures and videos. Part of Atelier, "
+                           "Cursed Entertainment's creative suite.");
         ImGui::Spacing();
         ImGui::TextWrapped("Faces: SCRFD and ArcFace (InsightFace). Swap: inswapper (InsightFace, non-commercial) or HyperSwap "
                            "(FaceFusion, ResearchRAIL). Restore: GFPGAN, CodeFormer (S-Lab, non-commercial), GPEN. Occlusion: XSeg. "
@@ -739,7 +753,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    const Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (capture.empty() ? 0 : SDL_WINDOW_HIDDEN);
+    const Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN;   // shown after the splash
     window = SDL_CreateWindow("Mimic", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1500, 900, flags);
     if (!window) return 1;
     SDL_SetWindowMinimumSize(window, 1000, 600);
@@ -747,20 +761,72 @@ int main(int argc, char** argv) {
     SDL_GL_MakeCurrent(window, gl);
     SDL_GL_SetSwapInterval(1);
     char* bp = SDL_GetBasePath();
-    if (bp) { if (SDL_Surface* icon = SDL_LoadBMP((std::string(bp) + "assets/icon.bmp").c_str())) { SDL_SetWindowIcon(window, icon); SDL_FreeSurface(icon); } SDL_free(bp); }
+    SDL_Surface* icon = bp ? SDL_LoadBMP((std::string(bp) + "assets/icon.bmp").c_str()) : nullptr;
+    if (bp) SDL_free(bp);
+    if (icon) SDL_SetWindowIcon(window, icon);
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().IniFilename = nullptr;
     loadFont();
     applyStyle();
-    ImGui_ImplSDL2_InitForOpenGL(window, gl);
+
+    // the splash: a small borderless window sharing the main window's OpenGL context, up while the face models load
+    SDL_Window* splashWin = nullptr;
+    if (capture.empty()) {
+        splashWin = SDL_CreateWindow("Mimic", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)Splash::W, (int)Splash::H, SDL_WINDOW_OPENGL | SDL_WINDOW_BORDERLESS);
+        if (splashWin && SDL_GL_MakeCurrent(splashWin, gl) != 0) { SDL_DestroyWindow(splashWin); splashWin = nullptr; SDL_GL_MakeCurrent(window, gl); }
+        if (splashWin && icon) SDL_SetWindowIcon(splashWin, icon);
+    }
+    if (icon) SDL_FreeSurface(icon);
+    ImGui_ImplSDL2_InitForOpenGL(splashWin ? splashWin : window, gl);
     ImGui_ImplOpenGL3_Init("#version 330");
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
 
-    std::string err;
-    if (!Ort::init(true, err)) say(err);
+    static std::atomic<int> loaded{0};
+    static std::atomic<bool> ready{false};
+    const int toLoad = std::max(1, (int)Mimic::modelsFor(settings).size());
     worker = std::thread(workerLoop);
-    queue([] { std::string e; if (!Mimic::prepare(settings, e, say)) say(e); else say("Ready, on the " + Ort::device()); });
+    queue([] {
+        std::string e;
+        if (!Ort::init(true, e)) { say(e); ready = true; return; }
+        auto count = [](const std::string& s) { say(s); if (s.rfind("Loading ", 0) == 0) ++loaded; };
+        if (!Mimic::prepare(settings, e, count)) say(e); else say("Ready, on the " + Ort::device());
+        ready = true;
+    });
+    if (splashWin) {
+        const Uint32 start = SDL_GetTicks();
+        bool skip = false;
+        for (;;) {
+            SDL_Event e;
+            while (SDL_PollEvent(&e)) {
+                ImGui_ImplSDL2_ProcessEvent(&e);
+                if (e.type == SDL_QUIT) quit = true;
+                if (e.type == SDL_MOUSEBUTTONDOWN || (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE)) skip = true;
+            }
+            const Uint32 t = SDL_GetTicks() - start;
+            if (skip || quit || (ready && t >= 1500) || t >= 30000) break;
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplSDL2_NewFrame();
+            ImGui::NewFrame();
+            std::string line;
+            { std::lock_guard<std::mutex> g(mtx); line = status; }
+            const float p = ready ? 1.0f : 0.05f + 0.9f * std::min(1.0f, (float)loaded / toLoad);
+            Splash::draw(ImGui::GetBackgroundDrawList(), 0, 0, ready ? "Ready" : line.c_str(), p);
+            ImGui::Render();
+            int sw, sh;
+            SDL_GL_GetDrawableSize(splashWin, &sw, &sh);
+            glViewport(0, 0, sw, sh);
+            glClearColor(0.1f, 0.1f, 0.1f, 1);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            SDL_GL_SwapWindow(splashWin);
+        }
+        ImGui_ImplSDL2_Shutdown();
+        SDL_DestroyWindow(splashWin);
+        SDL_GL_MakeCurrent(window, gl);
+        ImGui_ImplSDL2_InitForOpenGL(window, gl);
+    }
+    if (capture.empty()) { SDL_ShowWindow(window); SDL_MaximizeWindow(window); SDL_RaiseWindow(window); }
     if (!sources.empty()) addSources(sources);
     if (!file.empty()) loadTarget(file);
 

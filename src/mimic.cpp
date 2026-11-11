@@ -118,6 +118,8 @@ static std::vector<std::string> neededModels(const Settings& st) {
     return m;
 }
 
+std::vector<std::string> modelsFor(const Settings& st) { return neededModels(st); }
+
 std::vector<std::string> missingModels(const Settings& st) {
     std::vector<std::string> out;
     for (const auto& f : neededModels(st)) if (!Ort::have(f)) out.push_back(f);
