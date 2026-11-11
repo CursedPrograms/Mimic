@@ -1,0 +1,24 @@
+Mimic
+Copyright (c) 2026 Cursed Entertainment. MIT License (see LICENSE): Mimic's own code.
+
+Mimic's pipeline follows FaceFusion's (https://github.com/facefusion/facefusion): its warp templates, the
+inswapper/HyperSwap pre- and post-processing, pixel boost, the box and occlusion masks and the restorers' blend.
+Mimic is its own C++ code; FaceFusion is by Henry Ruhs and contributors.
+
+The models are NOT part of Mimic. They are downloaded on first use from FaceFusion's model releases
+(https://github.com/facefusion/facefusion-assets/releases), each under its own licence. Some are for
+NON-COMMERCIAL use only:
+  det_10g (SCRFD) and w600k_r50 (ArcFace) - InsightFace (https://github.com/deepinsight/insightface):
+      the code is MIT; the pretrained models are for non-commercial research use
+  inswapper_128 - InsightFace: non-commercial research use only
+  hyperswap_1a_256 - FaceFusion: ResearchRAIL licence
+  gfpgan_1.4 - Tencent ARC (https://github.com/TencentARC/GFPGAN): Apache License 2.0
+  codeformer - S-Lab (https://github.com/sczhou/CodeFormer): S-Lab License 1.0, non-commercial
+  gpen_bfr_512 - Tao Yang et al. (https://github.com/yangxy/GPEN): see its repository
+  xseg_1 - FaceFusion's export of DeepFaceLab's XSeg (https://github.com/iperov/DeepFaceLab): GPL-3.0
+
+Runs on ONNX Runtime (Microsoft, MIT) with DirectML (Microsoft, MIT). Video: ffmpeg (https://ffmpeg.org, LGPL/GPL),
+which Mimic runs as a separate program and does not ship. Window: SDL2 (zlib), Dear ImGui (MIT); pictures: stb (MIT).
+
+Use it responsibly: only use faces you have the right to use, get consent from the people shown, and say when a
+picture or video has been changed. Don't use it to deceive, harass or impersonate anyone.
