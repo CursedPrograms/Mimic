@@ -30,7 +30,11 @@ static void usage() {
         "  -s, --source FILE                the face to become (several of one person: their average)\n"
         "  -t, --target FILE                the picture or video\n"
         "  -o, --output FILE                where the result goes (default <target>_mimic.<ext>)\n"
-        "  --processors P...                face_swapper face_enhancer face_debugger (default: the first two)\n\n"
+        "  --processors P...                face_swapper face_editor face_enhancer face_debugger (default: swapper + enhancer)\n\n"
+        "  --face-editor-prompt TEXT        an expression in words: \"a big smile, eyes closed, looking left\"\n"
+        "  --face-editor-mouth-smile X      -1..1, and likewise: eyebrow-direction eye-gaze-horizontal eye-gaze-vertical\n"
+        "                                   eye-open-ratio lip-open-ratio mouth-grim mouth-pout mouth-purse\n"
+        "                                   mouth-position-horizontal mouth-position-vertical head-pitch head-yaw head-roll\n\n"
         "  --face-swapper-model M           ");
     for (const auto& m : Mimic::swapModels()) std::printf("%s ", modelKey(m.file).c_str());
     std::printf("\n  --face-swapper-pixel-boost N    1..4 (x the model's size)\n"
@@ -92,7 +96,7 @@ static int run(const std::vector<std::string>& args) {
         if (a == "-s" || a == "--source" || a == "--source-paths") for (auto& v : values(i)) sources.push_back(v);
         else if (a == "-t" || a == "--target" || a == "--target-path") target = one(i);
         else if (a == "-o" || a == "--output" || a == "--output-path") out = one(i);
-        else if (a == "--processors") { st.swap = st.enhance = st.debug = false; for (auto& v : values(i)) { if (v == "face_swapper") st.swap = true; else if (v == "face_enhancer") st.enhance = true; else if (v == "face_debugger") st.debug = true; } }
+        else if (a == "--processors") { st.swap = st.enhance = st.debug = false; for (auto& v : values(i)) { if (v == "face_swapper") st.swap = true; else if (v == "face_enhancer") st.enhance = true; else if (v == "face_debugger") st.debug = true; else if (v == "face_editor") st.edit = true; } }
         else if (a == "--face-swapper-model") { const std::string v = one(i); for (size_t k = 0; k < Mimic::swapModels().size(); ++k) if (modelKey(Mimic::swapModels()[k].file) == v) st.swapModel = (int)k; }
         else if (a == "--face-swapper-pixel-boost") { const std::string v = one(i); const int px = std::atoi(v.c_str()); const int size = Mimic::swapModels()[st.swapModel].size; st.boost = std::clamp(px > 8 ? px / size : px, 1, 4); }
         else if (a == "--face-swapper-weight") st.weight = std::clamp(num(i), 0.0f, 1.0f);
@@ -100,6 +104,21 @@ static int run(const std::vector<std::string>& args) {
         else if (a == "--face-enhancer-blend") st.enhanceBlend = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
         else if (a == "--face-enhancer-weight") st.enhanceWeight = std::clamp(num(i), 0.0f, 1.0f);
         else if (a == "--face-debugger-items") { for (auto& b : st.debugItems) b = false; for (auto& v : values(i)) { const int k = index(v, {"bounding-box", "face-landmark-5", "face-landmark-5/68", "face-landmark-68", "face-landmark-68/5", "face-mask"}); if (k >= 0) st.debugItems[k] = true; } }
+        else if (a == "--face-editor-prompt") {
+            std::string p; for (auto& v : values(i)) p += v + " ";
+            const std::string got = Mimic::promptToEdits(p, st.edits);
+            std::printf("Expression: %s\n", got.empty() ? "(no words it knows)" : got.c_str());
+            st.edit = true;
+        }
+        else if (a.rfind("--face-editor-", 0) == 0) {
+            static const char* keys[Mimic::ED_COUNT] = {"eyebrow-direction", "eye-gaze-horizontal", "eye-gaze-vertical", "eye-open-ratio",
+                "lip-open-ratio", "mouth-grim", "mouth-pout", "mouth-purse", "mouth-smile", "mouth-position-horizontal",
+                "mouth-position-vertical", "head-pitch", "head-yaw", "head-roll"};
+            const std::string k = a.substr(14);
+            bool known = false;
+            for (int e = 0; e < Mimic::ED_COUNT; ++e) if (k == keys[e]) { st.edits[e] = std::clamp(num(i), -1.0f, 1.0f); st.edit = known = true; }
+            if (!known) { std::printf("What's %s? (--help lists the options)\n", a.c_str()); return 1; }
+        }
         else if (a == "--face-detector-model") { const int k = index(one(i), {"retinaface", "scrfd", "yolo_face", "yunet", "many"}); if (k >= 0) st.detect.model = k; }
         else if (a == "--face-detector-size") st.detect.size = std::atoi(one(i).c_str());
         else if (a == "--face-detector-angles") { for (auto& b : st.detect.angles) b = false; for (auto& v : values(i)) { const int k = std::atoi(v.c_str()) / 90; if (k >= 0 && k < 4) st.detect.angles[k] = true; } }
@@ -137,6 +156,7 @@ static int run(const std::vector<std::string>& args) {
         else if (a == "-h" || a == "--help" || a == "/?") { usage(); return 0; }
         else { std::printf("What's %s? (--help lists the options)\n", a.c_str()); return 1; }
     }
+    if (st.swap && sources.empty() && st.edit) st.swap = false;   // only editing the expression: no face needed
     if (target.empty() || (st.swap && sources.empty())) { usage(); return 1; }
     const bool video = Video::isVideo(target);
     if (out.empty()) {

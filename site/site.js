@@ -3,6 +3,7 @@
   'use strict';
   const features = [
     ['Face swapper', '13 models: inswapper, HyperSwap 1a/1b/1c, SimSwap, Ghost, HiFiFace, BlendSwap, UniFace. Pixel boost for sharper big faces, and a weight between the source and the target.'],
+    ['Face editor', 'Change the expression FaceApp-style: a smile, the eyes, the gaze, the brows, the mouth, the head. Fourteen dials, or just describe it: "a big smile, eyes closed".'],
     ['Face enhancer', 'GFPGAN 1.2/1.3/1.4, CodeFormer, GPEN 256 to 2048 and RestoreFormer++, blended back in.'],
     ['Face selector', 'Every face, the first, or only faces like one you click. Order them, and filter by age, gender and race.'],
     ['Face masker', 'Box, occlusion (hands, hair and glasses stay in front), area and region masks, with blur and padding.'],

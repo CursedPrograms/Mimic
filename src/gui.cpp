@@ -268,7 +268,7 @@ static void seekFrame(float t) {
 }
 
 static void runPreview() {
-    if (original.empty() || !source.ready()) return;
+    if (original.empty() || (settings.swap && !source.ready())) return;
     const Img im = original; const auto src = source; const auto st = settings; const auto ref = reference;
     queue([im, src, st, ref] {
         Img out = im; std::string err;
@@ -278,7 +278,7 @@ static void runPreview() {
         const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         post([out] { result = out; resultStale = true; haveResult = true; });
         char msg[160];
-        snprintf(msg, sizeof msg, "%d face%s swapped in %.2f s, on the %s", n, n == 1 ? "" : "s", s, Ort::device().c_str());
+        snprintf(msg, sizeof msg, "%d face%s done in %.2f s, on the %s", n, n == 1 ? "" : "s", s, Ort::device().c_str());
         say(msg);
     });
 }
@@ -297,7 +297,7 @@ static void savePictureAs() {
 }
 
 static void renderVideo() {
-    if (!targetIsVideo || !source.ready()) return;
+    if (!targetIsVideo || (settings.swap && !source.ready())) return;
     const std::string out = fileDialog(true, "MP4 video|*.mp4|", "mp4", defaultOut());
     if (out.empty()) return;
     const std::string in = targetPath; const auto src = source; const auto st = settings; const auto ref = reference; const auto vo = output;
@@ -577,6 +577,8 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
     heading("PROCESSORS");
     if (ImGui::Checkbox("Face swapper", &settings.swap)) again = true;
     if (ImGui::Checkbox("Face enhancer", &settings.enhance)) again = true;
+    if (ImGui::Checkbox("Face editor", &settings.edit)) again = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Change the expression: a smile, the eyes, the brows, the mouth, the head's pose (LivePortrait).");
     if (ImGui::Checkbox("Face debugger", &settings.debug)) again = true;
 
     if (settings.swap && ImGui::CollapsingHeader("FACE SWAPPER", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -592,6 +594,33 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
         if (modelCombo("##enh", settings.enhanceModel, (int)ems.size(), [&](int i) { return ems[i].name; }, [&](int i) { return ems[i].file; }, [&](int i) { return ems[i].about; })) again = true;
         ImGui::SliderFloat("##blend", &settings.enhanceBlend, 0.0f, 1.0f, "blend: %.2f"); after();
         if (std::string(ems[settings.enhanceModel].file) == "codeformer.onnx") { ImGui::SliderFloat("##fid", &settings.enhanceWeight, 0.0f, 1.0f, "weight: %.2f"); after(); }
+    }
+    if (settings.edit && ImGui::CollapsingHeader("FACE EDITOR", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // a prompt sets the dials; the dials stay free to change after
+        static char prompt[256] = "";
+        static std::string understood;
+        ImGui::TextDisabled("Describe the expression");
+        const bool enter = ImGui::InputTextWithHint("##prompt", "a big smile, eyes closed", prompt, sizeof prompt, ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Words like: smile, laughing, sad, surprised, angry, worried, smug, eyes closed, wide eyes,\n"
+                                                      "looking left/up, raised eyebrows, mouth open, pout, kiss, turn left, chin up, tilt.\n"
+                                                      "\"slight\" / \"a little\" softens, \"very\" / \"big\" strengthens, \"not\" turns it round.");
+        if (ImGui::Button("Apply", ImVec2(cw * 0.5f - 3, 0)) || enter) {
+            float e[Mimic::ED_COUNT] = {0};
+            understood = Mimic::promptToEdits(prompt, e);
+            if (!understood.empty()) { memcpy(settings.edits, e, sizeof e); again = true; }
+            else understood = "(no words it knows: try smile, surprised, eyes closed...)";
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset", ImVec2(-1, 0))) { for (auto& v : settings.edits) v = 0; understood.clear(); again = true; }
+        if (!understood.empty()) { ImGui::PushTextWrapPos(0); ImGui::TextDisabled("%s", understood.c_str()); ImGui::PopTextWrapPos(); }
+        for (int i = 0; i < Mimic::ED_COUNT; ++i) {
+            ImGui::PushID(1000 + i);
+            char fmt[64]; snprintf(fmt, sizeof fmt, "%s: %%.2f", Mimic::editName(i));
+            ImGui::SliderFloat("##ed", &settings.edits[i], -1.0f, 1.0f, fmt); after();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s. Double-click to type; right-click for 0.", Mimic::editHint(i));
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { settings.edits[i] = 0; again = true; }
+            ImGui::PopID();
+        }
     }
     if (settings.debug && ImGui::CollapsingHeader("FACE DEBUGGER", ImGuiTreeNodeFlags_DefaultOpen))
         for (int i = 0; i < Mimic::DB_COUNT; ++i) if (ImGui::Checkbox(Mimic::debugName(i), &settings.debugItems[i])) again = true;
@@ -672,7 +701,7 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
             ImGui::ProgressBar(progress, ImVec2(w, 8), "");
             if (ImGui::Button("Stop", ImVec2(w, 0))) stopRender = true;
         } else {
-            ImGui::BeginDisabled(!source.ready());
+            ImGui::BeginDisabled(settings.swap && !source.ready());
             if (ImGui::Button("Render video...", ImVec2(w, 0))) renderVideo();
             ImGui::EndDisabled();
         }
@@ -746,6 +775,7 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--capture" && i + 1 < args.size()) capture = args[++i];
         else if (args[i] == "--source" && i + 1 < args.size()) sources.push_back(args[++i]);
+        else if (args[i] == "--edit" && i + 1 < args.size()) { settings.edit = true; Mimic::promptToEdits(args[++i], settings.edits); }
         else file = args[i];
     }
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) return 1;
@@ -827,6 +857,7 @@ int main(int argc, char** argv) {
         ImGui_ImplSDL2_InitForOpenGL(window, gl);
     }
     if (capture.empty()) { SDL_ShowWindow(window); SDL_MaximizeWindow(window); SDL_RaiseWindow(window); }
+    if (settings.edit && sources.empty()) settings.swap = false;   // only the expression: no face to become needed
     if (!sources.empty()) addSources(sources);
     if (!file.empty()) loadTarget(file);
 

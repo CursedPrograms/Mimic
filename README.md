@@ -49,6 +49,11 @@ FaceFusion's options, under FaceFusion's names (the command line takes its flags
   (more of the source, or more of the target's own look). Several pictures of the same person are averaged.
 - **Face enhancer:** 9 models: GFPGAN 1.2/1.3/1.4, CodeFormer (with its fidelity weight), GPEN 256/512/1024/2048
   and RestoreFormer++, with a blend.
+- **Face editor (new in 1.1):** change the expression, FaceApp-style, with FaceFusion's 14 dials (LivePortrait): smile,
+  eyebrows, eyes open, gaze left/right and up/down, lips open, mouth grim, pout and purse, the mouth's place, and
+  the head's pitch, yaw and roll. Or **describe it**: "a big smile, eyes closed", "surprised, looking left",
+  "a slight smirk, chin up". The words set the dials, and the dials stay free to fine-tune. No face to become is
+  needed: turn the swapper off to change only the expression.
 - **Face debugger:** the face box, the 5, 5/68, 68 and 68/5 face points, and the mask's outline.
 - **Face detector:** RetinaFace, SCRFD, YOLO-Face, YuNet, or several at once; detector size, turned 0/90/180/270
   degrees for sideways faces, score, margin.
@@ -81,7 +86,8 @@ Videos need [ffmpeg](https://ffmpeg.org/download.html) on the PATH (or `ffmpeg.e
 ```
 mimic-cli -s face.jpg [-s more.jpg] -t target.jpg|video.mp4 [-o out] [options]
 
-  --processors face_swapper face_enhancer face_debugger
+  --processors face_swapper face_editor face_enhancer face_debugger
+  --face-editor-prompt "a big smile, eyes closed"   --face-editor-mouth-smile -1..1   (and the other 13 dials)
   --face-swapper-model inswapper_128 | hyperswap_1a_256 | simswap_256 | ghost_1_256 | ...
   --face-swapper-pixel-boost 1..4     --face-swapper-weight 0..1
   --face-enhancer-model gfpgan_1.4 | codeformer | gpen_bfr_512 | restoreformer_plus_plus | ...

@@ -36,6 +36,14 @@ const char* regionName(int r);
 const char* areaName(int a);
 const char* debugName(int d);
 
+// ---- the face editor (LivePortrait): FaceFusion's 14 dials, each -1..1 ----
+enum Edit { ED_EYEBROW, ED_GAZE_H, ED_GAZE_V, ED_EYE_OPEN, ED_LIP_OPEN, ED_GRIM, ED_POUT, ED_PURSE, ED_SMILE,
+            ED_MOUTH_H, ED_MOUTH_V, ED_PITCH, ED_YAW, ED_ROLL, ED_COUNT };
+const char* editName(int e);       // "Smile", "Eyes open", ...
+const char* editHint(int e);       // what -1 and +1 do
+// a prompt ("a big smile, eyes closed, looking left") onto the dials; returns what it understood ("" = nothing)
+std::string promptToEdits(const std::string& prompt, float* edits);
+
 struct Settings {
     DetectSettings detect;
     // the face selector
@@ -62,6 +70,8 @@ struct Settings {
     int enhanceModel = 2;          // index into enhanceModels() (GFPGAN 1.4)
     float enhanceBlend = 0.8f;
     float enhanceWeight = 0.5f;    // CodeFormer's fidelity
+    bool edit = false;             // the face editor
+    float edits[ED_COUNT] = {0};
     bool debug = false;
     bool debugItems[DB_COUNT] = {false, false, true, false, false, true};
 };

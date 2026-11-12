@@ -113,6 +113,13 @@ static const Source SOURCES[] = {
     {"crossface_ghost.onnx", "models-3.4.0", "faceswap", nullptr},
     {"crossface_hififace.onnx", "models-3.4.0", "faceswap", nullptr},
     {"crossface_simswap.onnx", "models-3.4.0", "faceswap", nullptr},
+    // the face editor (LivePortrait)
+    {"live_portrait_feature_extractor.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"live_portrait_motion_extractor.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"live_portrait_eye_retargeter.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"live_portrait_lip_retargeter.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"live_portrait_stitcher.onnx", "models-3.0.0", "faceswap", nullptr},
+    {"live_portrait_generator.onnx", "models-3.0.0", "faceswap", nullptr},
     // restorers
     {"gfpgan_1.2.onnx", "models-3.0.0", "faceswap", nullptr},
     {"gfpgan_1.3.onnx", "models-3.0.0", "faceswap", nullptr},

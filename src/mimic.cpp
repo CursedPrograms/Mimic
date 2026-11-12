@@ -114,6 +114,8 @@ static std::vector<std::string> neededModels(const Settings& st) {
         m.push_back(sm.file);
         if (sm.converter) m.push_back(sm.converter);
     }
+    if (st.edit) for (const char* f : {"live_portrait_feature_extractor.onnx", "live_portrait_motion_extractor.onnx", "live_portrait_eye_retargeter.onnx",
+                                        "live_portrait_lip_retargeter.onnx", "live_portrait_stitcher.onnx", "live_portrait_generator.onnx"}) m.push_back(f);
     if (st.enhance) m.push_back(enhanceModels()[std::clamp(st.enhanceModel, 0, (int)enhanceModels().size() - 1)].file);
     return m;
 }
@@ -462,14 +464,17 @@ static bool debugOne(Img& frame, const Face& f, const Settings& st, std::string&
     return true;
 }
 
+bool editOne(Img& frame, const Face& target, const Settings& st, std::string& err);   // editor.cpp
+
 int processFrame(Img& frame, const Source& src, const Settings& st, const Reference& ref, std::string& err, Ort::Say say) {
-    if (st.swap && !src.ready()) { err = "Pick the face to become first"; return -1; }
+    if (st.swap && !src.ready()) { err = "Pick the face to become first (or turn the face swapper off)"; return -1; }
     if (!prepare(st, err, say)) return -1;
     double t = tick(), tPick, tSwap = 0, tEnh = 0;
     std::vector<Face> targets;
     if (!pickFaces(frame, src, st, ref, targets, nullptr, err)) return -1;
     tPick = tick() - t; t = tick();
     if (st.swap) for (const auto& f : targets) if (!swapOne(frame, f, src, st, err)) return -1;
+    if (st.edit) for (const auto& f : targets) if (!editOne(frame, f, st, err)) return -1;
     tSwap = tick() - t; t = tick();
     if (st.enhance) for (const auto& f : targets) if (!enhanceOne(frame, f, st, err)) return -1;
     tEnh = tick() - t;
