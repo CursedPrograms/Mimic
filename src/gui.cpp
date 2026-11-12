@@ -595,7 +595,11 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
         ImGui::SliderFloat("##blend", &settings.enhanceBlend, 0.0f, 1.0f, "blend: %.2f"); after();
         if (std::string(ems[settings.enhanceModel].file) == "codeformer.onnx") { ImGui::SliderFloat("##fid", &settings.enhanceWeight, 0.0f, 1.0f, "weight: %.2f"); after(); }
     }
-    if (settings.edit && ImGui::CollapsingHeader("FACE EDITOR", ImGuiTreeNodeFlags_DefaultOpen)) {
+    // always shown (not only when ticked above): moving a dial or describing an expression switches the editor on, and
+    // with no face to become, the swapper off, so changing an expression is one step
+    bool editTouched = false;
+    if (ImGui::CollapsingHeader("FACE EDITOR  (smile, eyes, expression)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!settings.edit) ImGui::TextDisabled("Off: describe an expression or move a dial to switch it on.");
         // a prompt sets the dials; the dials stay free to change after
         static char prompt[256] = "";
         static std::string understood;
@@ -607,7 +611,7 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
         if (ImGui::Button("Apply", ImVec2(cw * 0.5f - 3, 0)) || enter) {
             float e[Mimic::ED_COUNT] = {0};
             understood = Mimic::promptToEdits(prompt, e);
-            if (!understood.empty()) { memcpy(settings.edits, e, sizeof e); again = true; }
+            if (!understood.empty()) { memcpy(settings.edits, e, sizeof e); again = true; editTouched = true; }
             else understood = "(no words it knows: try smile, surprised, eyes closed...)";
         }
         ImGui::SameLine();
@@ -616,11 +620,17 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
         for (int i = 0; i < Mimic::ED_COUNT; ++i) {
             ImGui::PushID(1000 + i);
             char fmt[64]; snprintf(fmt, sizeof fmt, "%s: %%.2f", Mimic::editName(i));
-            ImGui::SliderFloat("##ed", &settings.edits[i], -1.0f, 1.0f, fmt); after();
+            if (ImGui::SliderFloat("##ed", &settings.edits[i], -1.0f, 1.0f, fmt)) editTouched = true;
+            after();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s. Double-click to type; right-click for 0.", Mimic::editHint(i));
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { settings.edits[i] = 0; again = true; }
             ImGui::PopID();
         }
+    }
+    if (editTouched && !settings.edit) {
+        settings.edit = true;
+        if (sourcePics.empty()) settings.swap = false;
+        again = true;
     }
     if (settings.debug && ImGui::CollapsingHeader("FACE DEBUGGER", ImGuiTreeNodeFlags_DefaultOpen))
         for (int i = 0; i < Mimic::DB_COUNT; ++i) if (ImGui::Checkbox(Mimic::debugName(i), &settings.debugItems[i])) again = true;
