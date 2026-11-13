@@ -9,7 +9,7 @@
     ['Face masker', 'Box, occlusion (hands, hair and glasses stay in front), area and region masks, with blur and padding.'],
     ['Detector and landmarker', 'RetinaFace, SCRFD, YOLO-Face or YuNet, turned for sideways faces; 2DFAN4 or PeppaWutz for 68 face points.'],
     ['Video', 'Through ffmpeg with the sound kept: x264, x265, VP9, NVENC, AMF or QSV, quality, fps and trim. On any GPU through DirectML.'],
-    ['In LayerTack', 'Filter > Mimic > Face Swap puts the result in as a new layer, masked to the selection.']
+    ['In Chimera', 'Filter > Mimic > Face Swap puts the result in as a new layer, masked to the selection.']
   ];
   const grid = document.getElementById('features');
   if (grid) {

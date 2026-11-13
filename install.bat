@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 rem Installs Mimic for this user: %LOCALAPPDATA%\Programs\Mimic, with Start menu and Desktop shortcuts.
-rem LayerTack finds it there for Filter > Mimic. Run build.bat first (or unzip a release and run this beside it).
+rem Chimera finds it there for Filter > Mimic. Run build.bat first (or unzip a release and run this beside it).
 set "SRC=dist\Mimic"
 if exist "Mimic.exe" set "SRC=."
 if not exist "%SRC%\Mimic.exe" ( echo Build it first: build.bat & exit /b 1 )

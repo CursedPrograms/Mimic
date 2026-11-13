@@ -30,7 +30,7 @@
 **FaceFusion's face processors, in C++.** Put one person's face onto the faces in a picture or a video,
 restore the detail, and see what it did, on your own PC: no Python, a GPU through DirectML (NVIDIA, AMD or Intel),
 or the CPU. Part of **[Atelier](https://github.com/CursedPrograms/Atelier)**, Cursed Entertainment's creative suite,
-and a plugin for [LayerTack](https://github.com/CursedPrograms/LayerTack) (Filter > Mimic).
+and a plugin for [Chimera](https://github.com/CursedPrograms/Chimera) (Filter > Mimic).
 **[Website](https://cursedprograms.github.io/Mimic/)**
 
 ![Mimic: the face to become, the before/after wipe and FaceFusion's settings](images/window.jpg)
@@ -66,14 +66,14 @@ FaceFusion's options, under FaceFusion's names (the command line takes its flags
   quality, fps, trim; audio encoder, quality and volume. About 6 fps at 720p with GFPGAN on an RTX 2060.
 - **The window:** drop pictures of the face to become on the left, a picture or video in the middle; drag the wipe
   between before and after; a video's preview frame on a slider; save the picture or render the video, with Stop.
-- **A LayerTack plugin:** Filter > Mimic > Face Swap puts the result in as a new layer, masked to the selection.
+- **A Chimera plugin:** Filter > Mimic > Face Swap puts the result in as a new layer, masked to the selection.
 
 ![The face debugger: the box, the 68 points and the mask (region mask without the eyes)](images/debugger.jpg)
 
 ## Install
 
 Download **Mimic-win64.zip** from [Releases](https://github.com/CursedPrograms/Mimic/releases), unzip it and run
-`install.bat` beside it (Start menu and Desktop shortcuts; LayerTack finds it there), or run `Mimic.exe` where it is.
+`install.bat` beside it (Start menu and Desktop shortcuts; Chimera finds it there), or run `Mimic.exe` where it is.
 Or install it with the [Atelier launcher](https://github.com/CursedPrograms/Atelier).
 
 The models aren't in the download: each is fetched once, the first time it's used, from
