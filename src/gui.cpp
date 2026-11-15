@@ -4,6 +4,7 @@
 //
 //   Mimic [target]
 //   Mimic --capture out.bmp [--source face.jpg] [target]     a screenshot from a hidden window, then quit
+#include "batch.h"
 #include "mimic.h"
 #include "picture.h"
 #include "splash.h"
@@ -37,7 +38,9 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 #pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 #endif
 #ifndef GL_CLAMP_TO_EDGE
@@ -92,8 +95,8 @@ static void loadFont() {
             add(f, 16.0f);
             const char* light = fileExists("C:/Windows/Fonts/segoeuil.ttf") ? "C:/Windows/Fonts/segoeuil.ttf" : f;
             ImFont* title = add(light, 50.0f);
-            ImFont* small = add(f, 13.0f);
-            Splash::setFonts(title, small);
+            ImFont* smallFont = add(f, 13.0f);
+            Splash::setFonts(title, smallFont);
             return;
         }
     io.Fonts->AddFontDefault();
@@ -334,7 +337,13 @@ static void renderVideo() {
     });
 }
 
+static void batchAdd(const std::vector<std::string>& paths);
 static void dropFiles(const std::vector<std::string>& files, bool onSourcePanel) {
+    {   // folders, or many targets with a face already chosen: a batch
+        std::error_code ec; bool folder = false; int targets = 0;
+        for (const auto& f : files) { if (fs::is_directory(fs::u8path(f), ec)) folder = true; else if (Batch::isTarget(f)) ++targets; }
+        if (folder || (!onSourcePanel && targets > 1 && !sourcePics.empty())) { batchAdd(files); return; }
+    }
     std::vector<std::string> pics, rest;
     for (const auto& f : files) (Video::isVideo(f) ? rest : pics).push_back(f);
     // on the left panel: the face to become. Elsewhere: the target (the last one), unless there's no face yet and
@@ -343,6 +352,184 @@ static void dropFiles(const std::vector<std::string>& files, bool onSourcePanel)
     if (!rest.empty()) { loadTarget(rest.back()); addSources(pics); return; }
     if (pics.size() > 1 && sourcePics.empty()) { addSources(pics); return; }
     if (!pics.empty()) loadTarget(pics.back());
+}
+
+
+// ---------- Batch: many pictures and videos, the same face and settings, one after another ----------
+static std::string pickFolder(const std::string& start) {
+#ifdef _WIN32
+    std::string out;
+    IFileOpenDialog* d = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d)))) {
+        DWORD o = 0; d->GetOptions(&o); d->SetOptions(o | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        if (!start.empty()) { IShellItem* si = nullptr; if (SUCCEEDED(SHCreateItemFromParsingName(fs::u8path(start).wstring().c_str(), nullptr, IID_PPV_ARGS(&si)))) { d->SetFolder(si); si->Release(); } }
+        if (SUCCEEDED(d->Show(nullptr))) { IShellItem* it = nullptr; if (SUCCEEDED(d->GetResult(&it))) { PWSTR p = nullptr; if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) { out = fs::path(p).u8string(); CoTaskMemFree(p); } it->Release(); } }
+        d->Release();
+    }
+    return out;
+#else
+    (void)start;
+    FILE* p = popen("zenity --file-selection --directory 2>/dev/null", "r"); if (!p) return {};
+    char line[4096] = {0}; std::string r = fgets(line, sizeof line, p) ? line : ""; pclose(p);
+    while (!r.empty() && (r.back() == '\n' || r.back() == '\r')) r.pop_back();
+    return r;
+#endif
+}
+static bool showBatch = false, batchStartWhenReady = false;
+struct BatchRow { std::string in, out, root; int state = Batch::WAITING; int faces = 0; float progress = 0; std::string note; };
+static std::vector<BatchRow> batchRows;   // the worker changes their state under mtx
+static std::atomic<bool> batchRunning{false}, batchStop{false}, batchSkip{false};
+static std::atomic<int> batchAt{-1};
+static bool batchSubfolders = true, batchSkipDone = true, batchBeside = true;
+static std::string batchOutDir, batchSuffix = "_mimic";
+static ImVec2 batchMin, batchMax;   // the window (files dropped on it go into the batch)
+static void batchOutputs() {   // where each waiting one's result goes
+    std::lock_guard<std::mutex> g(mtx);
+    for (auto& r : batchRows) if (r.state == Batch::WAITING) r.out = Batch::outputFor(r.in, batchBeside ? "" : batchOutDir, batchSuffix, r.root);
+}
+static void batchAdd(const std::vector<std::string>& paths) {
+    int added = 0;
+    for (const auto& p : paths) {
+        std::error_code ec; const bool dir = fs::is_directory(fs::u8path(p), ec);
+        for (const auto& f : Batch::collect({p}, batchSubfolders)) {
+            bool have = false;
+            { std::lock_guard<std::mutex> g(mtx); for (const auto& r : batchRows) if (r.in == f) have = true; }
+            if (have) continue;
+            BatchRow r; r.in = f; r.root = dir ? p : "";
+            { std::lock_guard<std::mutex> g(mtx); batchRows.push_back(r); }
+            ++added;
+        }
+    }
+    {   // a folder added first: its results into <folder>/mimic, apart from the originals
+        std::error_code ec; static bool chose = false;
+        if (!chose && !paths.empty() && fs::is_directory(fs::u8path(paths[0]), ec)) { batchBeside = false; batchOutDir.clear(); chose = true; }
+    }
+    if (batchOutDir.empty()) { std::lock_guard<std::mutex> g(mtx); if (!batchRows.empty()) batchOutDir = (fs::u8path(batchRows[0].root.empty() ? fs::u8path(batchRows[0].in).parent_path().u8string() : batchRows[0].root) / "mimic").u8string(); }
+    batchOutputs();
+    say(added ? "Batch: " + std::to_string(added) + " added" : "Batch: no pictures or videos in that");
+    showBatch = true;
+}
+static void batchStart() {
+    if (batchRunning || (settings.swap && !source.ready())) return;
+    batchOutputs();
+    { std::lock_guard<std::mutex> g(mtx); for (auto& r : batchRows) if (r.state != Batch::DONE) { r.state = Batch::WAITING; r.progress = 0; r.note.clear(); } }
+    const auto src = source; const auto st = settings; const auto ref = reference;
+    Batch::Options opt; opt.outDir = batchBeside ? "" : batchOutDir; opt.suffix = batchSuffix; opt.skipDone = batchSkipDone; opt.jpegQuality = jpegQuality; opt.video = output;
+    batchStop = false; batchSkip = false; batchRunning = true;
+    queue([src, st, ref, opt] {
+        std::string err;
+        if (!Mimic::prepare(st, err, say)) { say(err); batchRunning = false; return; }
+        const auto t0 = std::chrono::steady_clock::now();
+        int done = 0, failed = 0, skipped = 0;
+        for (size_t i = 0;; ++i) {
+            BatchRow r;
+            { std::lock_guard<std::mutex> g(mtx); if (i >= batchRows.size()) break; if (batchRows[i].state != Batch::WAITING) continue; batchRows[i].state = Batch::WORKING; r = batchRows[i]; }
+            if (batchStop) { std::lock_guard<std::mutex> g(mtx); batchRows[i].state = Batch::WAITING; break; }
+            batchAt = (int)i; batchSkip = false;
+            std::error_code ec;
+            if (opt.skipDone && fs::exists(fs::u8path(r.out), ec)) {
+                std::lock_guard<std::mutex> g(mtx); batchRows[i].state = Batch::SKIPPED; batchRows[i].note = "already there"; ++skipped; continue;
+            }
+            int faces = 0; std::string e;
+            say("Batch " + std::to_string(i + 1) + " / " + std::to_string(batchRows.size()) + ": " + base(r.in));
+            const bool ok = Batch::processOne(r.in, r.out, src, st, ref, opt, batchStop, batchSkip,
+                [i](float pr, const std::string& what) { std::lock_guard<std::mutex> g(mtx); if (i < batchRows.size()) { batchRows[i].progress = pr; batchRows[i].note = what; } }, faces, e);
+            std::lock_guard<std::mutex> g(mtx);
+            if (i >= batchRows.size()) break;
+            BatchRow& w = batchRows[i];
+            w.faces = faces;
+            if (batchStop) { w.state = ok ? Batch::STOPPED : Batch::FAILED; w.note = ok ? "stopped (what was done is kept)" : e; break; }
+            if (batchSkip) { w.state = Batch::SKIPPED; w.note = "skipped"; ++skipped; continue; }
+            if (ok) { w.state = Batch::DONE; w.progress = 1; w.note = faces == 1 ? "1 face" : std::to_string(faces) + " faces"; ++done; }
+            else { w.state = Batch::FAILED; w.note = e; ++failed; }
+        }
+        batchAt = -1; batchRunning = false;
+        const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        char msg[200]; snprintf(msg, sizeof msg, "Batch %s: %d done, %d skipped, %d failed (%.0f s)", batchStop ? "stopped" : "finished", done, skipped, failed, s);
+        say(msg);
+    });
+}
+static void batchWindow() {
+    if (!showBatch) return;
+    ImGui::SetNextWindowSize(ImVec2(760, 520), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(300, 140), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Batch", &showBatch)) { ImGui::End(); return; }
+    batchMin = ImGui::GetWindowPos(); batchMax = ImVec2(batchMin.x + ImGui::GetWindowWidth(), batchMin.y + ImGui::GetWindowHeight());
+    const bool running = batchRunning;
+    ImGui::TextDisabled("Every picture and video here gets the face on the left, with the settings on the right. Drop files or folders here.");
+    ImGui::BeginDisabled(running);
+    if (ImGui::Button("Add files...")) { std::vector<std::string> many; fileDialog(false, TARGETS, nullptr, "", true, &many); batchAdd(many); }
+    ImGui::SameLine(); if (ImGui::Button("Add a folder...")) { const std::string d = pickFolder(""); if (!d.empty()) batchAdd({d}); }
+    ImGui::SameLine(); ImGui::Checkbox("with its subfolders", &batchSubfolders);
+    ImGui::SameLine(); if (ImGui::Button("Clear")) { std::lock_guard<std::mutex> g(mtx); batchRows.clear(); }
+    ImGui::SameLine(); if (ImGui::Button("Clear finished")) { std::lock_guard<std::mutex> g(mtx); batchRows.erase(std::remove_if(batchRows.begin(), batchRows.end(), [](const BatchRow& r) { return r.state == Batch::DONE || r.state == Batch::SKIPPED; }), batchRows.end()); }
+    // where they go
+    bool changed = false;
+    if (ImGui::RadioButton("Beside each one", batchBeside)) { batchBeside = true; changed = true; }
+    ImGui::SameLine(); if (ImGui::RadioButton("Into a folder:", !batchBeside)) { batchBeside = false; changed = true; }
+    if (!batchBeside) {
+        ImGui::SameLine();
+        const fs::path od = fs::u8path(batchOutDir);
+        const std::string shown = batchOutDir.empty() ? "(choose)" : "...\\" + od.parent_path().filename().u8string() + "\\" + od.filename().u8string();
+        if (ImGui::Button((shown + "###outdir").c_str())) { const std::string d = pickFolder(batchOutDir); if (!d.empty()) { batchOutDir = d; changed = true; } }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nPictures from a folder keep their subfolders in it", batchOutDir.c_str());
+    }
+    char suf[64]; snprintf(suf, sizeof suf, "%s", batchSuffix.c_str());
+    ImGui::SetNextItemWidth(140); if (ImGui::InputText("name ending", suf, sizeof suf)) { batchSuffix = suf; changed = true; }
+    ImGui::SameLine(); ImGui::Checkbox("Skip ones already done", &batchSkipDone);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("When a result is already there, leave it (so a stopped batch carries on where it was)");
+    ImGui::EndDisabled();
+    if (changed) batchOutputs();
+    // the list
+    int total = 0, finished = 0; float sum = 0;
+    ImGui::BeginChild("##rows", ImVec2(0, -64), true);
+    if (ImGui::BeginTable("##bt", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 30);
+        ImGui::TableSetupColumn("Target", ImGuiTableColumnFlags_WidthStretch, 3);
+        ImGui::TableSetupColumn("Result", ImGuiTableColumnFlags_WidthStretch, 3);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch, 2.4f);
+        std::lock_guard<std::mutex> g(mtx);
+        int remove = -1, open = -1;
+        for (size_t i = 0; i < batchRows.size(); ++i) {
+            const BatchRow& r = batchRows[i];
+            ++total; if (r.state == Batch::DONE || r.state == Batch::SKIPPED || r.state == Batch::FAILED) ++finished;
+            sum += r.state == Batch::WORKING ? r.progress : (r.state == Batch::WAITING ? 0.0f : 1.0f);
+            ImGui::TableNextRow(); ImGui::PushID((int)i);
+            ImGui::TableNextColumn();
+            const ImU32 c = r.state == Batch::DONE ? IM_COL32(0x60, 0xd0, 0x80, 255) : r.state == Batch::FAILED ? IM_COL32(0xf0, 0x70, 0x70, 255)
+                          : r.state == Batch::WORKING ? C_PINK : C_DIM;
+            ImGui::TextColored(col4(c), "%s", Video::isVideo(r.in) ? "VID" : "IMG");
+            ImGui::TableNextColumn();
+            if (ImGui::Selectable(base(r.in).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SpanAllColumns) && ImGui::IsMouseDoubleClicked(0))
+                open = (int)i;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n-> %s\nDouble-click: open %s. Right-click: take it out.", r.in.c_str(), r.out.c_str(), r.state == Batch::DONE ? "the result" : "it");
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && r.state != Batch::WORKING) remove = (int)i;
+            ImGui::TableNextColumn(); ImGui::TextDisabled("%s", base(r.out).c_str());
+            ImGui::TableNextColumn();
+            if (r.state == Batch::WORKING) { ImGui::ProgressBar(r.progress, ImVec2(-1, 0), r.note.empty() ? "working" : r.note.c_str()); }
+            else ImGui::TextColored(col4(c), "%s%s%s", Batch::stateName(r.state), r.note.empty() ? "" : ": ", r.note.c_str());
+            ImGui::PopID();
+        }
+        if (remove >= 0) batchRows.erase(batchRows.begin() + remove);
+        if (open >= 0) { const BatchRow r = batchRows[open]; std::error_code ec; const std::string f = r.state == Batch::DONE && fs::exists(fs::u8path(r.out), ec) ? r.out : r.in; post([f] { loadTarget(f); }); }
+        ImGui::EndTable();
+    }
+    if (total == 0) ImGui::TextDisabled("Nothing yet: add pictures, videos or folders.");
+    ImGui::EndChild();
+    // the foot
+    ImGui::ProgressBar(total ? sum / total : 0.0f, ImVec2(-1, 8), "");
+    ImGui::Text("%d of %d", finished, total);
+    ImGui::SameLine(ImGui::GetWindowWidth() - 330);
+    if (!running) {
+        ImGui::BeginDisabled(total == 0 || (settings.swap && !source.ready()) || progress >= 0);
+        if (ImGui::Button("Start", ImVec2(320, 28))) batchStart();
+        ImGui::EndDisabled();
+        if (settings.swap && !source.ready() && total) { ImGui::SameLine(); ImGui::TextDisabled("(the face to become first)"); }
+    } else {
+        if (ImGui::Button("Skip this one", ImVec2(155, 28))) batchSkip = true;
+        ImGui::SameLine(); if (ImGui::Button(batchStop ? "Stopping..." : "Stop", ImVec2(155, 28))) batchStop = true;
+    }
+    ImGui::End();
 }
 
 // ---------- the frame ----------
@@ -354,6 +541,7 @@ static void menuBar() {
         ImGui::Separator();
         if (ImGui::MenuItem("Save Picture As...", "Ctrl+S", false, haveResult && !targetIsVideo)) savePictureAs();
         if (ImGui::MenuItem("Render Video...", "Ctrl+R", false, targetIsVideo && source.ready() && progress < 0)) renderVideo();
+        if (ImGui::MenuItem("Batch...", "Ctrl+B", showBatch)) showBatch = !showBatch;
         ImGui::Separator();
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) quit = true;
         ImGui::EndMenu();
@@ -374,6 +562,7 @@ static void keys() {
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O)) { const std::string p = fileDialog(false, TARGETS, nullptr, ""); if (!p.empty()) loadTarget(p); }
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) savePictureAs();
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R) && progress < 0) renderVideo();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B)) showBatch = !showBatch;
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q)) quit = true;
     if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_1)) view = 0;
     if (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_2)) view = 1;
@@ -434,7 +623,9 @@ static void leftPanel(ImVec2 pos, ImVec2 size) {
     heading("TARGET");
     if (targetPath.empty()) ImGui::TextDisabled("Drop a picture or a video on the preview");
     else { ImGui::TextWrapped("%s", base(targetPath).c_str()); if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", targetPath.c_str()); }
-    if (ImGui::Button("Open...", ImVec2(w, 0))) { const std::string p = fileDialog(false, TARGETS, nullptr, ""); if (!p.empty()) loadTarget(p); }
+    if (ImGui::Button("Open...", ImVec2(w * 0.5f - 3, 0))) { const std::string p = fileDialog(false, TARGETS, nullptr, ""); if (!p.empty()) loadTarget(p); }
+    ImGui::SameLine(); if (ImGui::Button("Batch...", ImVec2(-1, 0))) showBatch = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Many pictures and videos at once (Ctrl+B)");
     if (targetIsVideo && targetInfo.seconds > 0) {
         ImGui::TextDisabled("%d x %d, %.2f fps, %ld frames", targetInfo.w, targetInfo.h, targetInfo.fps, targetInfo.frames);
         ImGui::PushItemWidth(w);
@@ -758,6 +949,7 @@ static void frame() {
     if (originalStale) { upload(originalTex, original); originalStale = false; }
     if (resultStale) { upload(resultTex, result); resultStale = false; }
     if (referenceTexStale) { upload(referenceTex, referenceThumb); referenceTexStale = false; }
+    if (batchStartWhenReady && source.ready() && !batchRunning) { batchStartWhenReady = false; batchStart(); }
     if (previewWanted && !busy && progress < 0) {
         bool empty; { std::lock_guard<std::mutex> g(mtx); empty = jobs.empty(); }
         if (empty) { previewWanted = false; runPreview(); }
@@ -769,11 +961,12 @@ static void frame() {
     leftPanel(ImVec2(vp->Pos.x, vp->Pos.y + top), ImVec2(side, vp->Size.y - top));
     canvas(ImVec2(vp->Pos.x + side, vp->Pos.y + top), ImVec2(vp->Size.x - side * 2, vp->Size.y - top));
     rightPanel(ImVec2(vp->Pos.x + vp->Size.x - side, vp->Pos.y + top), ImVec2(side, vp->Size.y - top));
+    batchWindow();
     about();
 }
 
 int main(int argc, char** argv) {
-    std::string file, capture;
+    std::string file, capture; std::vector<std::string> batchStartup;
     std::vector<std::string> sources;
     std::vector<std::string> args;
 #ifdef _WIN32
@@ -786,6 +979,8 @@ int main(int argc, char** argv) {
         if (args[i] == "--capture" && i + 1 < args.size()) capture = args[++i];
         else if (args[i] == "--source" && i + 1 < args.size()) sources.push_back(args[++i]);
         else if (args[i] == "--edit" && i + 1 < args.size()) { settings.edit = true; Mimic::promptToEdits(args[++i], settings.edits); }
+        else if (args[i] == "--batch" && i + 1 < args.size()) batchStartup.push_back(args[++i]);
+        else if (args[i] == "--batch-start") batchStartWhenReady = true;   // tests: start it once the face is in   // into the Batch window
         else file = args[i];
     }
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) return 1;
@@ -870,13 +1065,14 @@ int main(int argc, char** argv) {
     if (settings.edit && sources.empty()) settings.swap = false;   // only the expression: no face to become needed
     if (!sources.empty()) addSources(sources);
     if (!file.empty()) loadTarget(file);
+    if (!batchStartup.empty()) batchAdd(batchStartup);
 
     int frames = 0, idle = 0;
     std::vector<std::string> drops;
     while (!quit) {
         SDL_Event e;
         drops.clear();
-        bool dropLeft = false;
+        bool dropLeft = false, dropBatch = false;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
             if (e.type == SDL_QUIT) quit = true;
@@ -884,9 +1080,10 @@ int main(int argc, char** argv) {
                 drops.push_back(e.drop.file); SDL_free(e.drop.file);
                 int mx, my; SDL_GetMouseState(&mx, &my);
                 dropLeft = mx >= sourcePanelMin.x && mx < sourcePanelMax.x && my >= sourcePanelMin.y;
+                if (showBatch && mx >= batchMin.x && mx < batchMax.x && my >= batchMin.y && my < batchMax.y) dropBatch = true;
             }
         }
-        if (!drops.empty()) dropFiles(drops, dropLeft);
+        if (!drops.empty()) { if (dropBatch) batchAdd(drops); else dropFiles(drops, dropLeft); }
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
@@ -901,7 +1098,7 @@ int main(int argc, char** argv) {
         ++frames;
         if (!capture.empty()) {
             bool quiet; { std::lock_guard<std::mutex> g(mtx); quiet = jobs.empty() && onMain.empty(); }
-            idle = (quiet && !busy && !previewWanted) ? idle + 1 : 0;
+            idle = (quiet && !busy && !previewWanted && !batchRunning && !batchStartWhenReady) ? idle + 1 : 0;
             if (frames >= 8 && idle >= 6) {
                 std::vector<unsigned char> px((size_t)w * h * 4);
                 glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());

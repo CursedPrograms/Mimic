@@ -66,6 +66,9 @@ FaceFusion's options, under FaceFusion's names (the command line takes its flags
   quality, fps, trim; audio encoder, quality and volume. About 6 fps at 720p with GFPGAN on an RTX 2060.
 - **The window:** drop pictures of the face to become on the left, a picture or video in the middle; drag the wipe
   between before and after; a video's preview frame on a slider; save the picture or render the video, with Stop.
+- **Batch:** many pictures and videos at once with the same face and settings (File > Batch, Ctrl+B, or drop a
+  folder): add files or folders (subfolders too), results beside each one or into a folder that keeps the
+  subfolders, a name ending, skip the ones already done (a stopped batch carries on), Skip this one, Stop.
 - **A Chimera plugin:** Filter > Mimic > Face Swap puts the result in as a new layer, masked to the selection.
 
 ![The face debugger: the box, the 68 points and the mask (region mask without the eyes)](images/debugger.jpg)
@@ -85,6 +88,7 @@ Videos need [ffmpeg](https://ffmpeg.org/download.html) on the PATH (or `ffmpeg.e
 
 ```
 mimic-cli -s face.jpg [-s more.jpg] -t target.jpg|video.mp4 [-o out] [options]
+mimic-cli -s face.jpg -t folder [more files or folders] -o out-folder [--subfolders] [--skip-existing] [--suffix _mimic]
 
   --processors face_swapper face_editor face_enhancer face_debugger
   --face-editor-prompt "a big smile, eyes closed"   --face-editor-mouth-smile -1..1   (and the other 13 dials)
@@ -117,6 +121,7 @@ The code, in `src/`:
 - `mimic.cpp`: the face swapper, enhancer, debugger, selector and masker
 - `emap.cpp`: reads inswapper's identity matrix straight from its .onnx file
 - `video.cpp`: ffmpeg in and out
+- `batch.cpp`: batches (the window's and the command line's)
 - `gui.cpp`, `splash.cpp`: the window and its splash; `cli.cpp`: `mimic-cli`
 
 ## Credits

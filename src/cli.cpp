@@ -2,11 +2,13 @@
 // FaceFusion's own (--face-swapper-model, --face-mask-types, ...), so its commands carry over.
 //
 //   mimic-cli -s face.jpg [-s more.jpg] -t target.jpg|video.mp4 -o out.jpg|out.mp4 [options]
+#include "batch.h"
 #include "mimic.h"
 #include "picture.h"
 #include "video.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -28,8 +30,11 @@ static void usage() {
         "mimic-cli - FaceFusion's face processors in C++: swap, enhance, debug, on pictures and videos. Part of Atelier.\n\n"
         "  mimic-cli -s face.jpg [-s more.jpg] -t target.jpg|video.mp4 [-o out] [options]\n\n"
         "  -s, --source FILE                the face to become (several of one person: their average)\n"
-        "  -t, --target FILE                the picture or video\n"
-        "  -o, --output FILE                where the result goes (default <target>_mimic.<ext>)\n"
+        "  -t, --target FILE...             the picture or video; several, or folders: a batch\n"
+        "  -o, --output FILE                where the result goes (default <target>_mimic.<ext>); a batch: a folder\n"
+        "  --subfolders                     a batch: folders' subfolders too (kept in the output folder)\n"
+        "  --skip-existing                  a batch: leave results already there (carry on a stopped batch)\n"
+        "  --suffix TEXT                    a batch: the results' name ending (default _mimic)\n"
         "  --processors P...                face_swapper face_editor face_enhancer face_debugger (default: swapper + enhancer)\n\n"
         "  --face-editor-prompt TEXT        an expression in words: \"a big smile, eyes closed, looking left\"\n"
         "  --face-editor-mouth-smile X      -1..1, and likewise: eyebrow-direction eye-gaze-horizontal eye-gaze-vertical\n"
@@ -81,7 +86,9 @@ static void usage() {
 
 static int run(const std::vector<std::string>& args) {
     std::vector<std::string> sources;
-    std::string target, out, reference;
+    std::string target, out, reference, suffix = "_mimic";
+    std::vector<std::string> targets;
+    bool subfolders = false, skipExisting = false;
     Mimic::Settings st;
     Video::Output vo;
     bool cpu = false;
@@ -94,7 +101,10 @@ static int run(const std::vector<std::string>& args) {
     for (size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         if (a == "-s" || a == "--source" || a == "--source-paths") for (auto& v : values(i)) sources.push_back(v);
-        else if (a == "-t" || a == "--target" || a == "--target-path") target = one(i);
+        else if (a == "-t" || a == "--target" || a == "--target-path") for (auto& v : values(i)) targets.push_back(v);
+        else if (a == "--subfolders" || a == "--recursive") subfolders = true;
+        else if (a == "--skip-existing") skipExisting = true;
+        else if (a == "--suffix") suffix = one(i);
         else if (a == "-o" || a == "--output" || a == "--output-path") out = one(i);
         else if (a == "--processors") { st.swap = st.enhance = st.debug = false; for (auto& v : values(i)) { if (v == "face_swapper") st.swap = true; else if (v == "face_enhancer") st.enhance = true; else if (v == "face_debugger") st.debug = true; else if (v == "face_editor") st.edit = true; } }
         else if (a == "--face-swapper-model") { const std::string v = one(i); for (size_t k = 0; k < Mimic::swapModels().size(); ++k) if (modelKey(Mimic::swapModels()[k].file) == v) st.swapModel = (int)k; }
@@ -157,9 +167,12 @@ static int run(const std::vector<std::string>& args) {
         else { std::printf("What's %s? (--help lists the options)\n", a.c_str()); return 1; }
     }
     if (st.swap && sources.empty() && st.edit) st.swap = false;   // only editing the expression: no face needed
-    if (target.empty() || (st.swap && sources.empty())) { usage(); return 1; }
+    if (targets.empty() || (st.swap && sources.empty())) { usage(); return 1; }
+    bool batch = targets.size() > 1;
+    { std::error_code ec; for (const auto& t : targets) if (fs::is_directory(fs::u8path(t), ec)) batch = true; }
+    target = targets[0];
     const bool video = Video::isVideo(target);
-    if (out.empty()) {
+    if (out.empty() && !batch) {
         const fs::path p = fs::u8path(target);
         out = (p.parent_path() / (p.stem().u8string() + "_mimic" + (video ? ".mp4" : p.extension().u8string()))).u8string();
     }
@@ -185,6 +198,28 @@ static int run(const std::vector<std::string>& args) {
     const auto t0 = std::chrono::steady_clock::now();
     auto secs = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); };
 
+    if (batch) {   // many targets, one after another; the output folder keeps folders' subfolders
+        std::vector<std::pair<std::string, std::string>> jobs;   // (target, the folder it came from)
+        for (const auto& t : targets) { std::error_code ec; const bool dir = fs::is_directory(fs::u8path(t), ec); for (const auto& f : Batch::collect({t}, subfolders)) jobs.push_back({f, dir ? t : ""}); }
+        if (jobs.empty()) { std::printf("No pictures or videos in those.\n"); return 1; }
+        Batch::Options opt; opt.outDir = out; opt.suffix = suffix; opt.skipDone = skipExisting; opt.jpegQuality = imageQuality; opt.video = vo;
+        std::atomic<bool> no{false};
+        int done = 0, skipped = 0, failed = 0;
+        for (size_t k = 0; k < jobs.size(); ++k) {
+            const std::string& in = jobs[k].first;
+            const std::string res = Batch::outputFor(in, out, suffix, jobs[k].second);
+            std::error_code ec;
+            if (skipExisting && fs::exists(fs::u8path(res), ec)) { std::printf("[%zu/%zu] %s: already there\n", k + 1, jobs.size(), in.c_str()); ++skipped; continue; }
+            int faces = 0; std::string e;
+            std::printf("[%zu/%zu] %s\n", k + 1, jobs.size(), in.c_str()); std::fflush(stdout);
+            const bool ok = Batch::processOne(in, res, src, st, ref, opt, no, no,
+                [](float, const std::string& what) { std::printf("\r  %s          ", what.c_str()); std::fflush(stdout); }, faces, e);
+            if (ok) { std::printf("\r  -> %s (%d face%s)          \n", res.c_str(), faces, faces == 1 ? "" : "s"); ++done; }
+            else { std::printf("\r  failed: %s          \n", e.c_str()); ++failed; }
+        }
+        std::printf("Batch: %d done, %d skipped, %d failed (%.1f s)\n", done, skipped, failed, secs());
+        return failed ? 2 : 0;
+    }
     if (!video) {
         Img im;
         if (!loadPicture(target, im, err)) { std::printf("%s\n", err.c_str()); return 1; }
