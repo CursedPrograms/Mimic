@@ -73,6 +73,17 @@ FaceFusion's options, under FaceFusion's names (the command line takes its flags
 
 ![The face debugger: the box, the 68 points and the mask (region mask without the eyes)](images/debugger.jpg)
 
+## Minimum requirements
+
+| | |
+| --- | --- |
+| **System** | Windows 10 or 11, 64-bit |
+| **Processor** | any 64-bit processor |
+| **Memory** | 8 GB RAM |
+| **Graphics** | a DirectX 12 card (NVIDIA, AMD or Intel) for speed, or the CPU, slower |
+| **Disk** | 50 MB for the app, up to 3 GB for the models it fetches as you use them |
+| **Other** | ffmpeg for videos |
+
 ## Install
 
 Download **Mimic-win64.zip** from [Releases](https://github.com/CursedPrograms/Mimic/releases), unzip it and run
