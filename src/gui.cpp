@@ -217,9 +217,12 @@ static void workerLoop() {
 
 static std::string base(const std::string& p) { return fs::u8path(p).filename().u8string(); }
 
+static std::atomic<int> sourcesPending{0};   // faces still being read (a screenshot waits for them)
 static void addSources(const std::vector<std::string>& files) {
     for (const auto& f : files) {
+        ++sourcesPending;
         queue([f] {
+            struct Done { ~Done() { --sourcesPending; } } done;
             Img im; std::string err;
             if (!loadPicture(f, im, err)) { say(err); return; }
             std::vector<Face> faces;
@@ -1098,7 +1101,7 @@ int main(int argc, char** argv) {
         ++frames;
         if (!capture.empty()) {
             bool quiet; { std::lock_guard<std::mutex> g(mtx); quiet = jobs.empty() && onMain.empty(); }
-            idle = (quiet && !busy && !previewWanted && !batchRunning && !batchStartWhenReady) ? idle + 1 : 0;
+            idle = (quiet && !busy && !previewWanted && !batchRunning && !batchStartWhenReady && sourcesPending == 0) ? idle + 1 : 0;
             if (frames >= 8 && idle >= 6) {
                 std::vector<unsigned char> px((size_t)w * h * 4);
                 glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
