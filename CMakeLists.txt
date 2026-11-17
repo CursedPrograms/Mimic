@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Mimic VERSION 1.1.0 LANGUAGES C CXX)
+project(Mimic VERSION 1.2.0 LANGUAGES C CXX)
 # Mimic: one person's face onto a picture or a video, in C++. Part of Atelier.
 #   Mimic      the window (SDL2, OpenGL 3, Dear ImGui)
 #   mimic-cli  the command line
