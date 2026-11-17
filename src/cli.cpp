@@ -110,6 +110,13 @@ static int run(const std::vector<std::string>& args) {
         else if (a == "--face-swapper-model") { const std::string v = one(i); for (size_t k = 0; k < Mimic::swapModels().size(); ++k) if (modelKey(Mimic::swapModels()[k].file) == v) st.swapModel = (int)k; }
         else if (a == "--face-swapper-pixel-boost") { const std::string v = one(i); const int px = std::atoi(v.c_str()); const int size = Mimic::swapModels()[st.swapModel].size; st.boost = std::clamp(px > 8 ? px / size : px, 1, 4); }
         else if (a == "--face-swapper-weight") st.weight = std::clamp(num(i), 0.0f, 1.0f);
+        // the swap's style (Mimic's own): classic or deep-live-cam, and the Deep-Live-Cam style's settings
+        else if (a == "--face-swapper-style") st.style = one(i) == "deep-live-cam" ? 1 : 0;
+        else if (a == "--dlc-colour" || a == "--dlc-color") st.dlcColour = one(i) != "off";
+        else if (a == "--dlc-poisson") st.dlcPoisson = one(i) != "off";
+        else if (a == "--dlc-mouth") { st.dlcMouth = true; st.dlcMouthSize = std::clamp(num(i) / 100.0f, 0.0f, 1.0f); }
+        else if (a == "--dlc-opacity") st.dlcOpacity = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
+        else if (a == "--dlc-sharpness") st.dlcSharpness = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
         else if (a == "--face-enhancer-model") { const std::string v = one(i); for (size_t k = 0; k < Mimic::enhanceModels().size(); ++k) if (modelKey(Mimic::enhanceModels()[k].file) == v) st.enhanceModel = (int)k; }
         else if (a == "--face-enhancer-blend") st.enhanceBlend = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
         else if (a == "--face-enhancer-weight") st.enhanceWeight = std::clamp(num(i), 0.0f, 1.0f);

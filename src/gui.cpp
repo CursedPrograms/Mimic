@@ -783,6 +783,30 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("A bigger crop, swapped in several passes: sharper on big faces, slower.");
         ImGui::SliderFloat("##weight", &settings.weight, 0.0f, 1.0f, "weight: %.2f"); after();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("0: more of the face to become. 1: more of the target's own look. 0.5: neither.");
+        // the style: Classic (FaceFusion's box and masks) or Deep-Live-Cam's look, as a two-way switch
+        {
+            const char* styles[] = {"Classic", "Deep-Live-Cam"};
+            const float bw = (ImGui::GetContentRegionAvail().x - 4) / 2;
+            for (int k = 0; k < 2; ++k) {
+                if (k) ImGui::SameLine(0, 4);
+                const bool on = settings.style == k;
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                if (ImGui::Button(styles[k], ImVec2(bw, 0)) && !on) { settings.style = k; again = true; }
+                if (on) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", k == 0 ? "Classic: FaceFusion's box and masks" : "Deep-Live-Cam's look: a soft oval, the colour matched to the skin, your own mouth if you like, a Poisson blend");
+            }
+        }
+        if (settings.style == 1) {
+            if (ImGui::Checkbox("Match the colour", &settings.dlcColour)) again = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The swapped face's colour and light matched to the face it replaces.");
+            ImGui::SameLine(); if (ImGui::Checkbox("Poisson blend", &settings.dlcPoisson)) again = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Blended in by its gradients, so no seam shows. Slower.");
+            if (ImGui::Checkbox("Keep my mouth", &settings.dlcMouth)) again = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Your own mouth stays: talking, teeth and tongue look like you.");
+            if (settings.dlcMouth) { ImGui::SliderFloat("##mouthsize", &settings.dlcMouthSize, 0.0f, 1.0f, "mouth reaches: %.2f"); after(); }
+            ImGui::SliderFloat("##opacity", &settings.dlcOpacity, 0.0f, 1.0f, "opacity: %.2f"); after();
+            ImGui::SliderFloat("##sharp", &settings.dlcSharpness, 0.0f, 1.0f, "sharpness: %.2f"); after();
+        }
     }
     if (settings.enhance && ImGui::CollapsingHeader("FACE ENHANCER", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (modelCombo("##enh", settings.enhanceModel, (int)ems.size(), [&](int i) { return ems[i].name; }, [&](int i) { return ems[i].file; }, [&](int i) { return ems[i].about; })) again = true;

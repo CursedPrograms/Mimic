@@ -47,6 +47,11 @@ FaceFusion's options, under FaceFusion's names (the command line takes its flags
 - **Face swapper:** 13 models: inswapper 128 (and fp16), HyperSwap 1a/1b/1c, SimSwap 256 and 512, Ghost 1/2/3,
   HiFiFace, BlendSwap and UniFace. **Pixel boost** (a 2x-4x crop, swapped in several passes) and **weight**
   (more of the source, or more of the target's own look). Several pictures of the same person are averaged.
+- **Two styles**, a switch under the swapper: **Classic** (FaceFusion's box and masks) or **Deep-Live-Cam**'s look:
+  a soft oval instead of the box, the swapped face's colour matched to the skin it replaces, **keep my mouth** (your
+  own lips, teeth and tongue, with how far down it reaches), a **Poisson blend** (no seam), opacity and sharpness.
+  Written anew after [Deep-Live-Cam](https://github.com/hacksider/Deep-Live-Cam)'s ideas. In mimic-cli:
+  `--face-swapper-style deep-live-cam`, `--dlc-mouth 30`, `--dlc-poisson on`, `--dlc-opacity 90`, `--dlc-sharpness 20`.
 - **Face enhancer:** 9 models: GFPGAN 1.2/1.3/1.4, CodeFormer (with its fidelity weight), GPEN 256/512/1024/2048
   and RestoreFormer++, with a blend.
 - **Face editor (new in 1.1):** change the expression, FaceApp-style, with FaceFusion's 14 dials (LivePortrait): smile,
