@@ -320,8 +320,9 @@ static void renderVideo() {
         Img frame;
         long done = 0;
         const auto t0 = std::chrono::steady_clock::now();
+        Mimic::Settings sq = st; sq.sequence = Mimic::beginSequence();   // one video: its frames may be smoothed
         while (!stopRender && done < total && rd.next(frame)) {
-            if (Mimic::swapFrame(frame, src, st, ref, err) < 0) { say(err); break; }
+            if (Mimic::swapFrame(frame, src, sq, ref, err) < 0) { say(err); break; }
             if (!wr.write(frame)) { say("ffmpeg stopped taking frames"); break; }
             ++done;
             const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -333,6 +334,7 @@ static void renderVideo() {
                 say(msg);
             }
         }
+        Mimic::endSequence(sq.sequence);
         rd.close();
         const bool fine = wr.close();
         say(stopRender ? "Stopped: what was done is in " + out : fine ? "Rendered " + out + " (" + std::to_string(done) + " frames)" : "ffmpeg couldn't finish " + out);
@@ -806,6 +808,8 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
             if (settings.dlcMouth) { ImGui::SliderFloat("##mouthsize", &settings.dlcMouthSize, 0.0f, 1.0f, "mouth reaches: %.2f"); after(); }
             ImGui::SliderFloat("##opacity", &settings.dlcOpacity, 0.0f, 1.0f, "opacity: %.2f"); after();
             ImGui::SliderFloat("##sharp", &settings.dlcSharpness, 0.0f, 1.0f, "sharpness: %.2f"); after();
+            ImGui::SliderFloat("##smooth", &settings.dlcSmooth, 0.0f, 1.0f, "smoothing: %.2f"); after();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Videos: each face blended with its last frame's, so it flickers less. More is steadier but trails a little.");
         }
     }
     if (settings.enhance && ImGui::CollapsingHeader("FACE ENHANCER", ImGuiTreeNodeFlags_DefaultOpen)) {

@@ -84,8 +84,10 @@ bool processOne(const std::string& in, const std::string& out, const Mimic::Sour
     Img frame; long done = 0;
     const auto t0 = std::chrono::steady_clock::now();
     bool ok = true;
+    Mimic::Settings sq = st; sq.sequence = Mimic::beginSequence();   // one video: its frames may be smoothed
+    struct EndSeq { int id; ~EndSeq() { Mimic::endSequence(id); } } endSeq{sq.sequence};
     while (!stop && !skip && done < total && rd.next(frame)) {
-        const int n = Mimic::processFrame(frame, src, st, ref, err);
+        const int n = Mimic::processFrame(frame, src, sq, ref, err);
         if (n < 0) { ok = false; break; }
         if (!faces && n > 0) faces = n;
         if (!wr.write(frame)) { err = "ffmpeg stopped taking frames"; ok = false; break; }

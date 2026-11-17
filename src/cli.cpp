@@ -117,6 +117,7 @@ static int run(const std::vector<std::string>& args) {
         else if (a == "--dlc-mouth") { st.dlcMouth = true; st.dlcMouthSize = std::clamp(num(i) / 100.0f, 0.0f, 1.0f); }
         else if (a == "--dlc-opacity") st.dlcOpacity = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
         else if (a == "--dlc-sharpness") st.dlcSharpness = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
+        else if (a == "--dlc-smoothing") st.dlcSmooth = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
         else if (a == "--face-enhancer-model") { const std::string v = one(i); for (size_t k = 0; k < Mimic::enhanceModels().size(); ++k) if (modelKey(Mimic::enhanceModels()[k].file) == v) st.enhanceModel = (int)k; }
         else if (a == "--face-enhancer-blend") st.enhanceBlend = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
         else if (a == "--face-enhancer-weight") st.enhanceWeight = std::clamp(num(i), 0.0f, 1.0f);
@@ -245,6 +246,7 @@ static int run(const std::vector<std::string>& args) {
     if (!wr.open(out, rd.info.w, rd.info.h, rd.info.fps, target, vo, err)) { std::printf("%s\n", err.c_str()); return 1; }
     Img frame;
     long done = 0;
+    st.sequence = Mimic::beginSequence();   // one video: its frames may be smoothed
     while (done < last && rd.next(frame)) {
         if (Mimic::processFrame(frame, src, st, ref, err) < 0) { std::printf("Frame %ld: %s\n", done, err.c_str()); return 1; }
         if (!wr.write(frame)) { std::printf("ffmpeg stopped taking frames\n"); return 1; }
