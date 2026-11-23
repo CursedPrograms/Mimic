@@ -116,6 +116,7 @@ static std::vector<std::string> neededModels(const Settings& st) {
     }
     if (st.edit) for (const char* f : {"live_portrait_feature_extractor.onnx", "live_portrait_motion_extractor.onnx", "live_portrait_eye_retargeter.onnx",
                                         "live_portrait_lip_retargeter.onnx", "live_portrait_stitcher.onnx", "live_portrait_generator.onnx"}) m.push_back(f);
+    if (st.edit && st.smileEngine == SMILE_STYLEGAN) for (const char* f : {"e4e_encoder.onnx", "stylegan2_ffhq_generator.onnx"}) m.push_back(f);
     if (st.enhance) m.push_back(enhanceModels()[std::clamp(st.enhanceModel, 0, (int)enhanceModels().size() - 1)].file);
     return m;
 }

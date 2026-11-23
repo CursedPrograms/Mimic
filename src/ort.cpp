@@ -80,6 +80,11 @@ std::string device() { return gpuOn ? "GPU (DirectML)" : "CPU"; }
 // F:\AIModels folder this PC keeps them in, and other names this PC already has them under
 struct Source { const char* file; const char* release; const char* sub; const char* alias; };
 static const Source SOURCES[] = {
+    // the StyleGAN smile: e4e and StyleGAN2 FFHQ exported to ONNX on this PC, and the happy direction (not FaceFusion's:
+    // no release to fetch them from)
+    {"e4e_encoder.onnx", nullptr, "stylegan2/onnx", nullptr},
+    {"stylegan2_ffhq_generator.onnx", nullptr, "stylegan2/onnx", nullptr},
+    {"emotion_happy.npy", nullptr, "stylegan2/directions", nullptr},
     // faces: detectors, landmarkers, recogniser, classifier
     {"retinaface_10g.onnx", "models-3.0.0", "face", "det_10g.onnx"},
     {"scrfd_2.5g.onnx", "models-3.0.0", "face", nullptr},
@@ -176,7 +181,7 @@ std::string findModel(const std::string& file, Say say) {
     const std::string here = localModel(file);
     if (!here.empty()) return here;
     const Source* src = sourceOf(file);
-    if (!src) return "";
+    if (!src || !src->release) return "";
     std::error_code ec;
     std::string dest = appModels() + "/" + file;
 #ifdef _WIN32

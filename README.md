@@ -60,6 +60,13 @@ FaceFusion's options, under FaceFusion's names (the command line takes its flags
   the head's pitch, yaw and roll. Or **describe it**: "a big smile, eyes closed", "surprised, looking left",
   "a slight smirk, chin up". The words set the dials, and the dials stay free to fine-tune. No face to become is
   needed: turn the swapper off to change only the expression.
+- **Smile engine:** the Smile dial through LivePortrait (FaceFusion's), or through **StyleGAN**, the way FaceApp
+  first made smiles: the face is found in StyleGAN2's space (e4e), moved along the "happy" direction and drawn again,
+  and only the change goes onto the real face round the mouth and cheeks, so the teeth, lifted cheeks and creases are
+  new and the skin, eyes and likeness stay sharp. A Smile strength slider sets how far it goes. It needs
+  `e4e_encoder.onnx` and `stylegan2_ffhq_generator.onnx` (exported from e4e's FFHQ checkpoint) and
+  `emotion_happy.npy` in `F:\AIModels\stylegan2` (or `models/` beside Mimic). The StyleGAN2 FFHQ weights are
+  NVIDIA's: **non-commercial use only**.
 - **Face debugger:** the face box, the 5, 5/68, 68 and 68/5 face points, and the mask's outline.
 - **Face detector:** RetinaFace, SCRFD, YOLO-Face, YuNet, or several at once; detector size, turned 0/90/180/270
   degrees for sideways faces, score, margin.
@@ -109,6 +116,7 @@ mimic-cli -s face.jpg -t folder [more files or folders] -o out-folder [--subfold
 
   --processors face_swapper face_editor face_enhancer face_debugger
   --face-editor-prompt "a big smile, eyes closed"   --face-editor-mouth-smile -1..1   (and the other 13 dials)
+  --face-editor-smile-engine liveportrait|stylegan   --face-editor-smile-strength 0..3
   --face-swapper-model inswapper_128 | hyperswap_1a_256 | simswap_256 | ghost_1_256 | ...
   --face-swapper-pixel-boost 1..4     --face-swapper-weight 0..1
   --face-enhancer-model gfpgan_1.4 | codeformer | gpen_bfr_512 | restoreformer_plus_plus | ...

@@ -839,6 +839,22 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
         ImGui::SameLine();
         if (ImGui::Button("Reset", ImVec2(-1, 0))) { for (auto& v : settings.edits) v = 0; understood.clear(); again = true; }
         if (!understood.empty()) { ImGui::PushTextWrapPos(0); ImGui::TextDisabled("%s", understood.c_str()); ImGui::PopTextWrapPos(); }
+        // which smile: LivePortrait's (FaceFusion's dials) or StyleGAN's (FaceApp's way: teeth, lifted cheeks)
+        ImGui::TextDisabled("Smile engine");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo("##smileEngine", Mimic::smileEngineName(settings.smileEngine))) {
+            for (int e = 0; e < Mimic::SMILE_COUNT; ++e)
+                if (ImGui::Selectable(Mimic::smileEngineName(e), settings.smileEngine == e)) { settings.smileEngine = e; again = true; editTouched = true; }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("LivePortrait moves the mouth's points; StyleGAN draws a real smile\n(teeth, lifted cheeks, creases) and keeps the rest of the face as it is.\nStyleGAN's face model is NVIDIA's FFHQ: non-commercial use.");
+        if (settings.smileEngine == Mimic::SMILE_STYLEGAN) {
+            ImGui::PushID("smileStrength");
+            if (ImGui::SliderFloat("##s", &settings.smileStrength, 0.25f, 2.0f, "Smile strength: %.2f")) editTouched = true;
+            after();
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) { settings.smileStrength = 1.0f; again = true; }
+            ImGui::PopID();
+        }
         for (int i = 0; i < Mimic::ED_COUNT; ++i) {
             ImGui::PushID(1000 + i);
             char fmt[64]; snprintf(fmt, sizeof fmt, "%s: %%.2f", Mimic::editName(i));

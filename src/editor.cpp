@@ -138,8 +138,24 @@ static bool run1(const char* model, std::vector<Ort::Tensor>& ins, std::vector<O
 }
 static Ort::Tensor tensor(const char* name, std::vector<int64_t> shape, std::vector<float> f) { Ort::Tensor t; t.name = name; t.shape = std::move(shape); t.f = std::move(f); return t; }
 
+const char* smileEngineName(int e) { return e == SMILE_STYLEGAN ? "StyleGAN (FaceApp's way)" : "LivePortrait (FaceFusion's)"; }
+
+static bool editLivePortrait(Img& frame, const Face& target, const Settings& st, const float* d, std::string& err);
+
 bool editOne(Img& frame, const Face& target, const Settings& st, std::string& err) {
-    const float* d = st.edits;
+    // with the StyleGAN smile, LivePortrait does every dial but the smile, then StyleGAN smiles
+    if (st.smileEngine == SMILE_STYLEGAN) {
+        float d[ED_COUNT];
+        memcpy(d, st.edits, sizeof d);
+        const float smile = d[ED_SMILE];
+        d[ED_SMILE] = 0;
+        if (!editLivePortrait(frame, target, st, d, err)) return false;
+        return styleganSmile(frame, target, smile, st.smileStrength, err);
+    }
+    return editLivePortrait(frame, target, st, st.edits, err);
+}
+
+static bool editLivePortrait(Img& frame, const Face& target, const Settings& st, const float* d, std::string& err) {
     bool any = false;
     for (int i = 0; i < ED_COUNT; ++i) if (std::fabs(d[i]) > 1e-4f) any = true;
     if (!any) return true;

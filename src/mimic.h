@@ -41,6 +41,10 @@ enum Edit { ED_EYEBROW, ED_GAZE_H, ED_GAZE_V, ED_EYE_OPEN, ED_LIP_OPEN, ED_GRIM,
             ED_MOUTH_H, ED_MOUTH_V, ED_PITCH, ED_YAW, ED_ROLL, ED_COUNT };
 const char* editName(int e);       // "Smile", "Eyes open", ...
 const char* editHint(int e);       // what -1 and +1 do
+enum SmileEngine { SMILE_LIVEPORTRAIT, SMILE_STYLEGAN, SMILE_COUNT };
+const char* smileEngineName(int e);
+// the StyleGAN smile on one face (smile.cpp): dial -1..1 (sad .. a big smile), strength scales it
+bool styleganSmile(Img& frame, const Face& target, float dial, float strength, std::string& err);
 // a prompt ("a big smile, eyes closed, looking left") onto the dials; returns what it understood ("" = nothing)
 std::string promptToEdits(const std::string& prompt, float* edits);
 
@@ -85,6 +89,8 @@ struct Settings {
     float enhanceWeight = 0.5f;    // CodeFormer's fidelity
     bool edit = false;             // the face editor
     float edits[ED_COUNT] = {0};
+    int smileEngine = 0;           // the Smile dial through 0 LivePortrait (FaceFusion's), 1 StyleGAN (FaceApp's way)
+    float smileStrength = 1.0f;    // StyleGAN's: how far the dial's ends go
     bool debug = false;
     bool debugItems[DB_COUNT] = {false, false, true, false, false, true};
 };

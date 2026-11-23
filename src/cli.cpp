@@ -38,6 +38,8 @@ static void usage() {
         "  --processors P...                face_swapper face_editor face_enhancer face_debugger (default: swapper + enhancer)\n\n"
         "  --face-editor-prompt TEXT        an expression in words: \"a big smile, eyes closed, looking left\"\n"
         "  --face-editor-mouth-smile X      -1..1, and likewise: eyebrow-direction eye-gaze-horizontal eye-gaze-vertical\n"
+        "  --face-editor-smile-engine E     liveportrait (FaceFusion's) or stylegan (FaceApp's way: teeth, lifted cheeks)\n"
+        "  --face-editor-smile-strength X   the StyleGAN smile's reach, 0..3 (default 1)\n"
         "                                   eye-open-ratio lip-open-ratio mouth-grim mouth-pout mouth-purse\n"
         "                                   mouth-position-horizontal mouth-position-vertical head-pitch head-yaw head-roll\n\n"
         "  --face-swapper-model M           ");
@@ -122,6 +124,8 @@ static int run(const std::vector<std::string>& args) {
         else if (a == "--face-enhancer-blend") st.enhanceBlend = std::clamp(num(i) / 100.0f, 0.0f, 1.0f);
         else if (a == "--face-enhancer-weight") st.enhanceWeight = std::clamp(num(i), 0.0f, 1.0f);
         else if (a == "--face-debugger-items") { for (auto& b : st.debugItems) b = false; for (auto& v : values(i)) { const int k = index(v, {"bounding-box", "face-landmark-5", "face-landmark-5/68", "face-landmark-68", "face-landmark-68/5", "face-mask"}); if (k >= 0) st.debugItems[k] = true; } }
+        else if (a == "--face-editor-smile-engine") { const std::string v = one(i); st.smileEngine = v == "stylegan" ? Mimic::SMILE_STYLEGAN : Mimic::SMILE_LIVEPORTRAIT; st.edit = true; }
+        else if (a == "--face-editor-smile-strength") st.smileStrength = std::clamp(num(i), 0.0f, 3.0f);
         else if (a == "--face-editor-prompt") {
             std::string p; for (auto& v : values(i)) p += v + " ";
             const std::string got = Mimic::promptToEdits(p, st.edits);
