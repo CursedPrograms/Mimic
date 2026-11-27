@@ -83,6 +83,15 @@ FaceFusion's options, under FaceFusion's names (the command line takes its flags
   folder): add files or folders (subfolders too), results beside each one or into a folder that keeps the
   subfolders, a name ending, skip the ones already done (a stopped batch carries on), Skip this one, Stop.
 - **A Chimera plugin:** Filter > Mimic > Face Swap puts the result in as a new layer, masked to the selection.
+- **Inoculant** (when [Inoculant](https://github.com/CursedPrograms/Inoculant) is installed):
+  - **File > Save Picture With Poison**, or the **Save with Inoculant poison** switch, saves the picture with an
+    almost invisible cloak on the faces, against face swaps and face recognition. Inoculant's report (how far
+    the face moved away from you) shows in the status line.
+  - **Cure poison on import** checks the pictures you open, and the faces you add, for a cloak and washes it
+    off first.
+  - Strength, steps, texture, colour, robustness and the cure's JPEG quality, blur and shrink are sliders in
+    the INOCULANT panel.
+  - Mimic finds `inoculant-cli` where Inoculant installs it, or set `INOCULANT_CLI`.
 
 ![The face debugger: the box, the 68 points and the mask (region mask without the eyes)](images/debugger.jpg)
 

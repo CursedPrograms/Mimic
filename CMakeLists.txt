@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Mimic VERSION 1.2.0 LANGUAGES C CXX)
+project(Mimic VERSION 1.2.1 LANGUAGES C CXX)
 # Mimic: one person's face onto a picture or a video, in C++. Part of Atelier.
 #   Mimic      the window (SDL2, OpenGL 3, Dear ImGui)
 #   mimic-cli  the command line
@@ -23,7 +23,7 @@ if(NOT EXISTS ${ORT_DIR}/onnxruntime_c_api.h)
     file(DOWNLOAD https://raw.githubusercontent.com/microsoft/onnxruntime/v1.20.1/include/onnxruntime/core/session/onnxruntime_c_api.h ${ORT_DIR}/onnxruntime_c_api.h)
 endif()
 
-add_library(mimic_core STATIC src/ort.cpp src/faces.cpp src/emap.cpp src/mimic.cpp src/editor.cpp src/smile.cpp src/video.cpp src/picture.cpp src/stb.cpp src/batch.cpp)
+add_library(mimic_core STATIC src/ort.cpp src/faces.cpp src/emap.cpp src/mimic.cpp src/editor.cpp src/smile.cpp src/video.cpp src/picture.cpp src/stb.cpp src/batch.cpp src/inoculant.cpp)
 target_include_directories(mimic_core PUBLIC ${STB_DIR} ${ORT_DIR} src)
 if(MSVC)
     target_compile_options(mimic_core PRIVATE /O2 /fp:fast /utf-8 /D_CRT_SECURE_NO_WARNINGS)

@@ -5,6 +5,7 @@
 //   Mimic [target]
 //   Mimic --capture out.bmp [--source face.jpg] [target]     a screenshot from a hidden window, then quit
 #include "batch.h"
+#include "inoculant.h"
 #include "mimic.h"
 #include "picture.h"
 #include "splash.h"
@@ -184,6 +185,9 @@ static bool originalStale = false, resultStale = false, haveResult = false;
 static float wipe = 0.5f;
 static int view = 0;                   // 0 wipe, 1 result, 2 original
 static int jpegQuality = 95;
+static Inoculant::Poison poison;          // Inoculant: the cloak put on saved pictures
+static Inoculant::Cure cureOpts;          // and the antidote for pictures coming in
+static bool poisonOnSave = false, cureOnImport = false;
 static Video::Output output;          // FaceFusion's output settings
 static bool showAbout = false;
 
@@ -217,6 +221,18 @@ static void workerLoop() {
 
 static std::string base(const std::string& p) { return fs::u8path(p).filename().u8string(); }
 
+// Load a picture; with "Cure poison on import" on, Inoculant inspects and washes it first.
+static bool loadIncoming(const std::string& f, Img& im, std::string& err) {
+    if (!cureOnImport) return loadPicture(f, im, err);
+    const std::string tmp = Inoculant::tempPath(".png");
+    std::string verdict;
+    if (!Inoculant::cure(f, tmp, cureOpts, verdict, err)) { say(err + " (loaded as it is)"); err.clear(); return loadPicture(f, im, err); }
+    const bool ok = loadPicture(tmp, im, err);
+    std::error_code ec; fs::remove(fs::u8path(tmp), ec);
+    if (ok) say(base(f) + " cured. " + verdict);
+    return ok;
+}
+
 static std::atomic<int> sourcesPending{0};   // faces still being read (a screenshot waits for them)
 static void addSources(const std::vector<std::string>& files) {
     for (const auto& f : files) {
@@ -224,7 +240,7 @@ static void addSources(const std::vector<std::string>& files) {
         queue([f] {
             struct Done { ~Done() { --sourcesPending; } } done;
             Img im; std::string err;
-            if (!loadPicture(f, im, err)) { say(err); return; }
+            if (!loadIncoming(f, im, err)) { say(err); return; }
             std::vector<Face> faces;
             if (!Faces::detect(im, faces, err, 0.5f, say) || faces.empty()) { say(base(f) + ": " + (err.empty() ? "no face in it" : err)); return; }
             Face face = faces[0];
@@ -254,7 +270,7 @@ static void loadTarget(const std::string& path) {
         if (Video::isVideo(path)) {
             if (Video::ffmpeg().empty()) { say("Videos need ffmpeg: put ffmpeg.exe next to Mimic or on the PATH"); return; }
             if (!Video::probe(path, info, err) || !Video::frameAt(path, 0, im, err)) { say(err); return; }
-        } else if (!loadPicture(path, im, err)) { say(err); return; }
+        } else if (!loadIncoming(path, im, err)) { say(err); return; }
         std::vector<Face> faces;
         Faces::analyse(im, settings.detect, faces, err, false, say);
         post([im, info, faces] { original = im; targetInfo = info; previewFaces = faces; originalStale = true; previewWanted = true; });
@@ -294,13 +310,33 @@ static std::string defaultOut() {
     return (p.parent_path() / (p.stem().u8string() + "_mimic" + (targetIsVideo ? ".mp4" : p.extension().u8string()))).u8string();
 }
 
-static void savePictureAs() {
+// Save with Inoculant's cloak: the result goes to a temporary PNG, Inoculant writes the
+// protected picture to `p` in the background and reports how well it hides the face.
+static void savePoisoned(const std::string& p) {
+    const std::string tmp = Inoculant::tempPath(".png");
+    std::string err;
+    if (!savePicture(tmp, result, err, 100)) { say(err); return; }
+    const auto opts = poison;
+    say("Poisoning with Inoculant... (a minute or so)");
+    queue([tmp, p, opts] {
+        std::string report, e;
+        const bool ok = Inoculant::protect(tmp, p, opts, report, e);
+        std::error_code ec; fs::remove(fs::u8path(tmp), ec);
+        if (!ok) { say(e); return; }
+        for (auto& c : report) if (c == '\n' || c == '\r') c = ' ';
+        say("Saved with poison: " + p + ". " + report);
+    });
+}
+
+static void savePictureAs(bool withPoison) {
     if (!haveResult || targetIsVideo) return;
     const std::string p = fileDialog(true, "JPEG|*.jpg|PNG|*.png|", "jpg", defaultOut());
     if (p.empty()) return;
+    if (withPoison) { savePoisoned(p); return; }
     std::string err;
     if (savePicture(p, result, err, jpegQuality)) say("Saved " + p); else say(err);
 }
+static void savePictureAs() { savePictureAs(poisonOnSave); }
 
 static void renderVideo() {
     if (!targetIsVideo || (settings.swap && !source.ready())) return;
@@ -545,6 +581,7 @@ static void menuBar() {
         if (ImGui::MenuItem("Open Target...", "Ctrl+O")) { const std::string p = fileDialog(false, TARGETS, nullptr, ""); if (!p.empty()) loadTarget(p); }
         ImGui::Separator();
         if (ImGui::MenuItem("Save Picture As...", "Ctrl+S", false, haveResult && !targetIsVideo)) savePictureAs();
+        if (ImGui::MenuItem("Save Picture With Poison...", nullptr, false, haveResult && !targetIsVideo)) savePictureAs(true);
         if (ImGui::MenuItem("Render Video...", "Ctrl+R", false, targetIsVideo && source.ready() && progress < 0)) renderVideo();
         if (ImGui::MenuItem("Batch...", "Ctrl+B", showBatch)) showBatch = !showBatch;
         ImGui::Separator();
@@ -935,6 +972,22 @@ static void rightPanel(ImVec2 pos, ImVec2 size) {
         strCombo("##aenc", output.audioEncoder, Video::audioEncoders());
         ImGui::SliderInt("##aq", &output.audioQuality, 0, 100, "audio quality: %d");
         ImGui::SliderInt("##av", &output.audioVolume, 0, 100, "volume: %d%%");
+    }
+    if (ImGui::CollapsingHeader("INOCULANT  (poison / cure)")) {
+        if (Inoculant::cli().empty())
+            ImGui::TextWrapped("Inoculant isn't installed. Get it from github.com/CursedPrograms/Inoculant to protect and cure pictures here.");
+        ImGui::Checkbox("Save with Inoculant poison", &poisonOnSave);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Saved pictures get an almost invisible cloak on the faces, against face swaps and face recognition");
+        ImGui::SliderFloat("##pstr", &poison.strength, 1.0f, 16.0f, "poison strength: %.1f");
+        ImGui::SliderInt("##psteps", &poison.steps, 5, 200, "poison steps: %d");
+        ImGui::SliderFloat("##ptex", &poison.texture, 0.0f, 1.0f, "hide in texture: %.2f");
+        ImGui::SliderFloat("##pcol", &poison.colour, 0.0f, 1.0f, "colour shift: %.2f");
+        ImGui::SliderFloat("##prob", &poison.robustness, 0.0f, 1.0f, "survives editing: %.2f");
+        ImGui::Checkbox("Cure poison on import", &cureOnImport);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pictures you open are checked for a cloak and washed with Inoculant's purifiers first");
+        ImGui::SliderInt("##cjpeg", &cureOpts.jpeg, 10, 100, "cure: JPEG quality %d");
+        ImGui::SliderFloat("##cblur", &cureOpts.blur, 0.0f, 5.0f, "cure: blur %.1f");
+        ImGui::SliderInt("##cshrink", &cureOpts.shrink, 10, 100, "cure: shrink to %d%%");
     }
     if (ImGui::CollapsingHeader("EXECUTION")) ImGui::TextWrapped("Running on the %s. (mimic-cli --execution-providers cpu runs on the CPU.)", Ort::device().c_str());
     ImGui::PopItemWidth();
