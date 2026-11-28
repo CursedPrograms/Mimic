@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2022          # has Visual Studio 2022, which build.bat asks for
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
